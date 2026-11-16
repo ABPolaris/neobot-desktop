@@ -1,0 +1,118 @@
+name: QuailEgg Release
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".changes/**"
+      - ".quailegg.toml"
+      - ".quailegg/pre-release.lock"
+      - ".quailegg/release.json"
+      - "CHANGELOG.md"
+      - "frontend/package.json"
+      - "go.mod"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: qegg-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.actor != 'github-actions[bot]'
+    outputs:
+      phase: ${{ steps.plan.outputs.phase }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.26', cache: true }
+      - name: Install qegg
+        run: go install github.com/SuperQuail/QuailEgg/cmd/qegg@v0.14.0
+      - name: Plan
+        id: plan
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          qegg plan --json > "$RUNNER_TEMP/plan.json"
+          phase="$(jq -r .phase "$RUNNER_TEMP/plan.json")"
+          case "$phase" in
+            none|version|publish) ;;
+            *) echo "unexpected phase: $phase" >&2; exit 1 ;;
+          esac
+          echo "phase=$phase" >> "$GITHUB_OUTPUT"
+  build-windows:
+    needs: plan
+    if: needs.plan.outputs.phase == 'publish'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.26', cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
+      - run: wails build -platform windows/amd64 -nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qegg-assets-windows
+          if-no-files-found: error
+          path: |
+            build/bin/neobot-desktop-amd64-installer.exe
+  version:
+    needs:
+      - plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: needs.plan.outputs.phase == 'version'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.26', cache: true }
+      - name: Install qegg
+        run: go install github.com/SuperQuail/QuailEgg/cmd/qegg@v0.14.0
+      - name: Release
+        run: qegg release --yes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  publish:
+    needs:
+      - plan
+      - build-windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: needs.plan.outputs.phase == 'publish'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.26', cache: true }
+      - name: Install qegg
+        run: go install github.com/SuperQuail/QuailEgg/cmd/qegg@v0.14.0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: qegg-assets-*
+          path: .quailegg/assets/downloaded
+      - name: Release
+        run: qegg release --yes --assets-dir .quailegg/assets/downloaded
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,10 @@
+build/bin
+node_modules
+frontend/dist
+frontend/package.json.md5
+/frontend/wailsjs/
+
+# qegg runtime state
+/.quailegg/state/
+/.quailegg/lock
+/.quailegg/assets/
