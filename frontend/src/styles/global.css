@@ -11,6 +11,8 @@ body { margin: 0; }
 .title-bar a:focus-visible, .title-bar button:focus-visible { outline: 2px solid #fff; outline-offset: -4px; }
 .brand { display: inline-flex; align-items: center; gap: 9px; justify-self: start; margin-left: 18px; color: inherit; font-size: 18px; font-weight: 700; white-space: nowrap; }
 .brand:hover { color: inherit; }
+.brand-block { display: flex; align-items: center; gap: 10px; justify-self: start; min-width: 0; }
+.app-version { font-size: 12px; font-weight: 600; letter-spacing: .02em; opacity: .78; white-space: nowrap; }
 .title-nav { display: flex; align-items: center; gap: clamp(2px, 1vw, 16px); }
 .title-nav a { display: flex; align-items: center; justify-content: center; gap: 8px; padding-inline: clamp(9px, 1.5vw, 21px); height: 36px; border-radius: 6px; font-size: 14px; font-weight: 650; white-space: nowrap; color: inherit; }
 .title-nav a:hover, .title-nav a[aria-current="page"] { background: #052e6e45; color: #fff; }
@@ -31,6 +33,7 @@ body { margin: 0; }
 .data-dir { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .data-path { overflow-wrap: anywhere; white-space: normal; text-align: left; }
 .self-start { align-self: flex-start; }
+.about-collapse { background: #fff; border-color: #f0f0f0; border-radius: 10px; }
 .qr-block { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
 
 .launcher-home { min-height: 100%; display: grid; grid-template-columns: clamp(204px, 29.2vw, 340px) minmax(0, 1fr); }
@@ -99,7 +102,7 @@ body { margin: 0; }
 }
 @media (max-width: 600px) {
     .title-bar { grid-template-columns: auto 1fr auto; }
-    .brand span { display: none; }
+    .brand span, .app-version { display: none; }
     .title-nav { justify-content: center; }
     .title-nav svg { display: none; }
     .launcher-home { grid-template-columns: minmax(0, 1fr); }

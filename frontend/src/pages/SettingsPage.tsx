@@ -2,7 +2,9 @@ import {App, Card, Collapse, Form, Input, Radio, Space, Switch, Typography} from
 import {useEffect, useState} from 'react'
 import {SaveSources, SetVersionIsolation} from '../../wailsjs/go/main/App'
 import {launcher} from '../../wailsjs/go/models'
+import {BrowserOpenURL} from '../../wailsjs/runtime/runtime'
 import {useLauncher} from '../app/LauncherProvider'
+import {APP_VERSION} from '../app/version'
 
 export function SettingsPage() {
     const {action, state} = useLauncher()
@@ -86,5 +88,20 @@ export function SettingsPage() {
                 {isolationBusy && <Typography.Text type="secondary">{isolationHint}</Typography.Text>}
             </div>
         </Card>
+        <Collapse className="about-collapse" items={[{
+            key: 'about',
+            label: '关于',
+            extra: <Typography.Text type="secondary">v{APP_VERSION}</Typography.Text>,
+            children: <Space direction="vertical" size={10}>
+                <Space size={8}>
+                    <Typography.Text type="secondary">版本号</Typography.Text>
+                    <Typography.Text code copyable={{text: APP_VERSION}}>{APP_VERSION}</Typography.Text>
+                </Space>
+                <Space size={16} wrap>
+                    <Typography.Link onClick={() => BrowserOpenURL('https://github.com/SuperQuail/NeoBot')}>项目主页</Typography.Link>
+                    <Typography.Link onClick={() => BrowserOpenURL('https://github.com/SuperQuail/neobot-desktop/issues')}>问题反馈</Typography.Link>
+                </Space>
+            </Space>,
+        }]} />
     </div>
 }
