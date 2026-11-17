@@ -103,6 +103,15 @@ func (m *Manager) start(version string, confirmed bool) {
 		m.logMessage(m.runtimeError)
 		return
 	}
+	// 插件依赖同步可能要跑几分钟，必须在锁外：否则快照、停止和日志刷新都会被
+	// 一起卡住。这一段没有 return，锁的配对仍由上面的 defer 负责。
+	sources := m.state.Sources
+	m.mu.Unlock()
+	m.syncPluginDependencies(version, data, sources)
+	m.mu.Lock()
+	if m.closing {
+		return
+	}
 	python := filepath.Join(m.versionDir(version), "Scripts", "python.exe")
 	cmd := exec.Command(python, "-u", "-m", "neobot_app.cli")
 	cmd.Dir = data
@@ -117,6 +126,11 @@ func (m *Manager) start(version string, confirmed bool) {
 		return
 	}
 	cmd.Stdout, cmd.Stderr = writer, writer
+	// 子进程必须拿到「非终端」的 stdin：Windows 的 NUL 设备会被 Python 的
+	// sys.stdin.isatty() 判成终端，NeoBot 的插件依赖安装器于是向它提问，立刻
+	// 读到 EOF 抛 EOFError——面板安装请求变成 500，启动装配期还会把进程带崩。
+	// 给一个空 reader，子进程看到的是已经关闭的管道。
+	cmd.Stdin = strings.NewReader("")
 	if err := cmd.Start(); err != nil {
 		_ = writer.Close()
 		_ = reader.Close()
