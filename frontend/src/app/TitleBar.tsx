@@ -2,6 +2,7 @@ import {useEffect, useState} from 'react'
 import {Link, useLocation} from 'react-router'
 import {Quit, WindowIsMaximised, WindowMinimise, WindowToggleMaximise} from '../../wailsjs/runtime/runtime'
 import {LauncherIcon} from '../components/LauncherIcon'
+import {APP_VERSION} from './version'
 
 const tabs = [
     {path: '/', label: '启动', icon: 'play'},
@@ -34,9 +35,12 @@ export function TitleBar() {
     return <header className="title-bar" onDoubleClick={event => {
         if (event.target instanceof Element && !event.target.closest('button, a, nav')) WindowToggleMaximise()
     }}>
-        <Link to="/" className="brand" aria-label="NeoBot Desktop 启动页">
-            <LauncherIcon name="bot" size={30} /><span>NeoBot Desktop</span>
-        </Link>
+        <div className="brand-block">
+            <Link to="/" className="brand" aria-label="NeoBot Desktop 启动页">
+                <LauncherIcon name="bot" size={30} /><span>NeoBot Desktop</span>
+            </Link>
+            <span className="app-version" title="NeoBot Desktop 版本号">v{APP_VERSION}</span>
+        </div>
         <nav className="title-nav" aria-label="主导航">
             {tabs.map(({path, label, icon}) => <Link key={path} to={path}
                 aria-current={current === path ? 'page' : undefined}>
