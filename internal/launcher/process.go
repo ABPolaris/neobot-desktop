@@ -115,8 +115,7 @@ func (m *Manager) start(version string, confirmed bool) {
 	python := filepath.Join(m.versionDir(version), "Scripts", "python.exe")
 	cmd := exec.Command(python, "-u", "-m", "neobot_app.cli")
 	cmd.Dir = data
-	cmd.Env = cleanEnv(false, "PYTHONUTF8=1", "NEOBOT_DATA_DIR="+data,
-		"NEOBOT_ENV_FILE="+filepath.Join(data, ".env"), "NEOBOT_DESKTOP_LOCAL_DASHBOARD=1")
+	cmd.Env = m.backendEnv(data, sources)
 	hideWindow(cmd)
 	suspendAtLaunch(cmd)
 	reader, writer, err := os.Pipe()
@@ -183,6 +182,30 @@ func (m *Manager) start(version string, confirmed bool) {
 		m.notify()
 	}()
 	go m.poll(p)
+}
+
+// backendEnv 是后端进程的环境：在继承的环境上补齐桌面端自己的设置。
+//
+// 后端自己也会调 uv/pip 装插件依赖，用户选了镜像就不该让它们回落到 pypi.org。
+// 环境变量压不过命令行参数，桌面端自己的安装仍以 --default-index 为准。
+func (m *Manager) backendEnv(data string, sources Sources) []string {
+	return cleanEnv(false, backendEnvExtra(m.root, data, sources)...)
+}
+
+// backendEnvExtra 是 backendEnv 里由桌面端追加的那部分，单独拆出来便于测试。
+func backendEnvExtra(root, data string, sources Sources) []string {
+	extra := []string{
+		"PYTHONUTF8=1",
+		"NEOBOT_DATA_DIR=" + data,
+		"NEOBOT_ENV_FILE=" + filepath.Join(data, ".env"),
+		"NEOBOT_DESKTOP_LOCAL_DASHBOARD=1",
+		// 与桌面端共用 uv 缓存：同一个包不必下载两次。
+		"UV_CACHE_DIR=" + filepath.Join(root, "cache"),
+	}
+	if index := sources.Index; index != "" {
+		extra = append(extra, "UV_DEFAULT_INDEX="+index, "PIP_INDEX_URL="+index)
+	}
+	return extra
 }
 
 func (m *Manager) watchOutput(bot *botProcess, r *os.File) {
