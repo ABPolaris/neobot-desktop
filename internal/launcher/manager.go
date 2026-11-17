@@ -20,12 +20,17 @@ import (
 const (
 	// Intentionally empty until a published build passes the Windows end-to-end release gate.
 	recommendedVersion = ""
-	uvVersion          = "0.12.9"
-	uvArchive          = "uv-x86_64-pc-windows-msvc.zip"
-	officialUV         = "https://github.com/astral-sh/uv/releases/download"
-	officialIndex      = "https://pypi.org/simple"
-	mirrorPython       = "https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone"
-	mirrorIndex        = "https://mirrors.ustc.edu.cn/pypi/simple"
+	// Bumping uvVersion also requires updating uvWheelSHA256 and uvArchiveSHA256 in
+	// install.go, and confirming the mirror already carries that wheel and that the
+	// wheel still stores uv.exe at uvWheelEntry; otherwise accelerated installs fail
+	// with "uv 下载不完整或校验失败" (stale digest) or "下载源没有提供 uv <版本>"
+	// (missing wheel), and official installs fail with the same digest error.
+	uvVersion     = "0.12.9"
+	uvArchive     = "uv-x86_64-pc-windows-msvc.zip"
+	officialUV    = "https://github.com/astral-sh/uv/releases/download"
+	officialIndex = "https://pypi.org/simple"
+	mirrorPython  = "https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone"
+	mirrorIndex   = "https://pypi.tuna.tsinghua.edu.cn/simple"
 )
 
 var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:(a|b|rc)(0|[1-9][0-9]{0,8}))?$`)
@@ -126,22 +131,24 @@ func Open(root string, changed func()) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Manager{root: root, changed: changed, installed: map[string]Version{}, releaseLock: release,
-		state: diskState{Sources: defaultSources("official"), Backups: map[string]string{}},
-	}
-	err = readJSON(filepath.Join(root, "settings.json"), &m.state)
+	m := &Manager{root: root, changed: changed, installed: map[string]Version{}, releaseLock: release}
+	// Decode into a zero value so a settings file that omits a source field does
+	// not inherit a default it never asked for; validSources fills the preset.
+	var state diskState
+	err = readJSON(filepath.Join(root, "settings.json"), &state)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		release()
 		return nil, fmt.Errorf("读取启动器设置：%w", err)
 	}
-	m.state.Sources, err = validSources(m.state.Sources)
+	state.Sources, err = validSources(state.Sources)
 	if err != nil {
 		release()
 		return nil, err
 	}
-	if m.state.Backups == nil {
-		m.state.Backups = map[string]string{}
+	if state.Backups == nil {
+		state.Backups = map[string]string{}
 	}
+	m.state = state
 	if m.state.DataVersion != "" &&
 		(!versionPattern.MatchString(m.state.DataVersion) || versionOf(m.state.DataVersion).Preview) {
 		// Older builds could persist a branch id here. It only tracks shared
@@ -197,11 +204,14 @@ func compareVersions(a, b string) int {
 	return 0
 }
 
+// defaultSources fills in the preset for a download scheme. Only the explicit
+// official preset stays on the upstream hosts; every other value, including the
+// empty preset written by older builds, gets the accelerated mirrors.
 func defaultSources(preset string) Sources {
-	if preset == "accelerated" {
-		return Sources{Preset: preset, UV: officialUV, Python: mirrorPython, Index: mirrorIndex}
+	if preset == "official" {
+		return Sources{Preset: "official", UV: officialUV, Index: officialIndex}
 	}
-	return Sources{Preset: "official", UV: officialUV, Index: officialIndex}
+	return Sources{Preset: "accelerated", UV: officialUV, Python: mirrorPython, Index: mirrorIndex}
 }
 
 func validSources(s Sources) (Sources, error) {
@@ -214,6 +224,9 @@ func validSources(s Sources) (Sources, error) {
 			*field = strings.TrimRight(strings.TrimSpace(*field), "/")
 			if i == 1 && *field == "" {
 				continue
+			}
+			if *field == "" {
+				return Sources{}, errors.New("自定义下载源需要填写完整地址")
 			}
 			u, err := url.Parse(*field)
 			if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {

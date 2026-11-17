@@ -7,7 +7,7 @@ export function SettingsPage() {
     const {action, state} = useLauncher()
     const {modal} = App.useApp()
     const [form] = Form.useForm<launcher.Sources>()
-    const preset = Form.useWatch('preset', form)
+    const preset = Form.useWatch('preset', form) ?? state?.sources.preset
     if (!state) return null
     const downloading = state.job.state === 'running'
     const isolationBusy = state.starting || state.stopping || downloading || Boolean(state.running)
@@ -39,13 +39,10 @@ export function SettingsPage() {
                         {value: 'custom', label: '自定义'},
                     ]} />
                 </Form.Item>
-                {preset === 'accelerated' && <Typography.Paragraph type="secondary">
-                    Python 和软件包使用国内镜像；uv 仍从官方源下载。
-                </Typography.Paragraph>}
                 <Collapse defaultActiveKey={state.sources.preset === 'custom' ? ['sources'] : []}
                     items={[{key: 'sources', label: '高级下载源', children: <>
-                        <Form.Item name="uv" label="uv 发行包地址前缀"
-                            rules={[{required: preset === 'custom'}]}><Input disabled={preset !== 'custom'} /></Form.Item>
+                        {preset !== 'accelerated' && <Form.Item name="uv" label="uv 发行包地址前缀"
+                            rules={[{required: preset === 'custom'}]}><Input disabled={preset !== 'custom'} /></Form.Item>}
                         <Form.Item name="python" label="Python 运行时下载前缀"
                             extra="留空使用 uv 官方默认值。"><Input disabled={preset !== 'custom'} /></Form.Item>
                         <Form.Item name="index" label="Python 软件包索引"

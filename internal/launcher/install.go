@@ -19,6 +19,18 @@ import (
 	"time"
 )
 
+const (
+	// Both sources ship the same uv.exe; each is pinned to the digest of the
+	// container it downloads.
+	uvArchiveEntry  = "uv.exe"
+	uvArchiveSHA256 = "ddbfcee1ac615a0499f6aa97b5ec8ebdf3ee4a7714a48055ec2ba0030e3cf810"
+	uvWheelEntry    = "uv-" + uvVersion + ".data/scripts/uv.exe"
+)
+
+// uvWheelSHA256 is the digest of the PyPI wheel. It is a variable so tests can
+// install from a fixture wheel; production code never writes it.
+var uvWheelSHA256 = "871e884c3329f69c12bb7426edb9e727745c3bb2db6d9e0538ce0e1bdfb64916"
+
 var downloads = &http.Client{
 	Timeout: 2 * time.Minute,
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -31,17 +43,29 @@ var downloads = &http.Client{
 
 func (m *Manager) Available() ([]Version, error) {
 	m.mu.Lock()
-	index := m.state.Sources.Index
+	sources := m.state.Sources
 	m.mu.Unlock()
-	versions, err := availableAt(index)
-	if err != nil && index != officialIndex {
+	versions, err := availableAt(sources.Index)
+	if shouldFallBack(sources, versions, err) {
 		return availableAt(officialIndex)
 	}
 	return versions, err
 }
 
+// shouldFallBack reports whether a version list from these sources is unusable
+// and the official index should be tried instead. An error always falls back;
+// an empty list only does for the accelerated preset, because a custom index is
+// the operator's own choice and should not be answered with pypi.org versions.
+func shouldFallBack(sources Sources, versions []Version, err error) bool {
+	if sources.Index == officialIndex {
+		return false
+	}
+	return err != nil || (len(versions) == 0 && sources.Preset == "accelerated")
+}
+
 func availableAt(index string) ([]Version, error) {
-	req, err := http.NewRequest(http.MethodGet, index+"/neobot-app/", nil)
+	page := index + "/neobot-app/"
+	req, err := http.NewRequest(http.MethodGet, page, nil)
 	if err != nil {
 		return nil, errors.New("软件包索引地址无效")
 	}
@@ -51,40 +75,27 @@ func availableAt(index string) ([]Version, error) {
 		return nil, errors.New("无法获取版本列表，请检查网络后重试")
 	}
 	defer resp.Body.Close()
-	var list struct {
-		Files []struct {
-			Filename string `json:"filename"`
-			Yanked   any    `json:"yanked"`
-		} `json:"files"`
-	}
 	if resp.StatusCode != 200 {
 		return nil, errors.New("无法读取 NeoBot 版本列表")
 	}
+	// Resolve links against the address that answered, not the one requested: a
+	// mirror may redirect the project page to another prefix.
+	files, err := parseSimpleFiles(io.LimitReader(resp.Body, 8<<20), resp.Header.Get("Content-Type"), resp.Request.URL.String())
+	if err != nil {
+		return nil, errors.New("无法解析 NeoBot 版本列表")
+	}
 	available := map[string]bool{}
-	add := func(filename string) {
-		parts := strings.Split(filename, "-")
+	for _, file := range files {
+		if file.Yanked {
+			continue
+		}
+		parts := strings.Split(file.Filename, "-")
 		if len(parts) < 2 || (parts[0] != "neobot_app" && parts[0] != "neobot.app") {
-			return
+			continue
 		}
 		version := strings.TrimSuffix(strings.TrimSuffix(parts[1], ".tar.gz"), ".zip")
 		if versionPattern.MatchString(version) {
 			available[version] = true
-		}
-	}
-	if strings.Contains(resp.Header.Get("Content-Type"), "json") {
-		if json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&list) != nil {
-			return nil, errors.New("无法解析 NeoBot 版本列表")
-		}
-		for _, f := range list.Files {
-			yanked, _ := f.Yanked.(bool)
-			_, hasReason := f.Yanked.(string)
-			if !yanked && !hasReason {
-				add(f.Filename)
-			}
-		}
-	} else {
-		if err := readSimpleHTML(io.LimitReader(resp.Body, 8<<20), add); err != nil {
-			return nil, err
 		}
 	}
 	result := make([]Version, 0, len(available))
@@ -95,22 +106,136 @@ func availableAt(index string) ([]Version, error) {
 	return result, nil
 }
 
-func readSimpleHTML(r io.Reader, add func(string)) error {
+type simpleFile struct {
+	Filename string
+	URL      string
+	Yanked   bool
+}
+
+// parseSimpleFiles reads a PEP 503 project page. Indexes answer with PEP 691
+// JSON when asked, HTML otherwise; either form may use links relative to the
+// project page.
+func parseSimpleFiles(r io.Reader, contentType, page string) ([]simpleFile, error) {
+	base, err := url.Parse(page)
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(contentType, "json") {
+		var list struct {
+			Files []struct {
+				Filename string `json:"filename"`
+				URL      string `json:"url"`
+				Yanked   any    `json:"yanked"`
+			} `json:"files"`
+		}
+		if err := json.NewDecoder(r).Decode(&list); err != nil {
+			return nil, err
+		}
+		files := make([]simpleFile, 0, len(list.Files))
+		for _, f := range list.Files {
+			yanked, _ := f.Yanked.(bool)
+			_, hasReason := f.Yanked.(string)
+			file := simpleFile{Filename: f.Filename, Yanked: yanked || hasReason}
+			if u := resolveLink(base, f.URL); u != nil {
+				file.URL = u.String()
+			}
+			files = append(files, file)
+		}
+		return files, nil
+	}
 	// PEP 503 indexes may return HTML when they have not implemented JSON.
 	body, err := io.ReadAll(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var files []simpleFile
 	for _, match := range simpleLink.FindAllStringSubmatch(string(body), -1) {
-		if strings.Contains(strings.ToLower(match[0]), "data-yanked") {
+		u := resolveLink(base, match[1])
+		if u == nil {
 			continue
 		}
-		u, err := url.Parse(match[1])
-		if err == nil {
-			add(filepath.Base(u.Path))
-		}
+		files = append(files, simpleFile{
+			Filename: filepath.Base(u.Path),
+			URL:      u.String(),
+			Yanked:   strings.Contains(strings.ToLower(match[0]), "data-yanked"),
+		})
 	}
-	return nil
+	return files, nil
+}
+
+// resolveLink makes an index link absolute; mirrors may answer with paths
+// relative to the project page. A PEP 503 link often carries a #sha256 fragment,
+// which is not part of the download.
+func resolveLink(base *url.URL, link string) *url.URL {
+	if link == "" || strings.HasPrefix(link, "#") {
+		return nil
+	}
+	u, err := url.Parse(link)
+	if err != nil {
+		return nil
+	}
+	u = base.ResolveReference(u)
+	// Only web links can be downloaded; anything else would fail far from here.
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil
+	}
+	u.Fragment = ""
+	return u
+}
+
+// uvWheelURL finds the Windows x64 wheel of the pinned uv release on a PEP 503
+// index. The wheel carries the same uv.exe as the GitHub archive.
+func uvWheelURL(ctx context.Context, index string) (string, error) {
+	page := index + "/uv/"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, page, nil)
+	if err != nil {
+		return "", errors.New("软件包索引地址无效")
+	}
+	req.Header.Set("Accept", "application/vnd.pypi.simple.v1+json")
+	resp, err := downloads.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", errors.New("任务已取消或超时")
+		}
+		return "", errors.New("无法获取 uv 版本列表，请检查网络后重试")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", errors.New("无法读取 uv 版本列表")
+	}
+	// The uv page lists every release for every platform and keeps growing (2.4 MB
+	// when this was written), so it gets a wider cap than the neobot-app page. An
+	// overflowing JSON answer fails to decode; only the HTML fallback is truncated
+	// silently, which would hide the newest releases at the end.
+	files, err := parseSimpleFiles(io.LimitReader(resp.Body, 32<<20), resp.Header.Get("Content-Type"), resp.Request.URL.String())
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", errors.New("任务已取消或超时")
+		}
+		return "", errors.New("无法解析 uv 版本列表")
+	}
+	// Match a prefix and a suffix instead of the full wheel name: uv may change
+	// its tags, and the digest still pins the content.
+	prefix, suffix := "uv-"+uvVersion+"-", "-win_amd64.whl"
+	address := ""
+	for _, file := range files {
+		if file.Yanked || file.URL == "" || !strings.HasPrefix(file.Filename, prefix) || !strings.HasSuffix(file.Filename, suffix) {
+			continue
+		}
+		// Some mirrors list the same file twice; only distinct addresses are
+		// ambiguous.
+		if file.URL == address {
+			continue
+		}
+		if address != "" {
+			return "", fmt.Errorf("下载源提供了多个 uv %s 发行包，请更换下载源后重试", uvVersion)
+		}
+		address = file.URL
+	}
+	if address == "" {
+		return "", fmt.Errorf("下载源没有提供 uv %s，可在设置中切换为官方源后重试", uvVersion)
+	}
+	return address, nil
 }
 
 func (m *Manager) Install(version string, official, start bool) error {
@@ -241,12 +366,29 @@ func (m *Manager) installEnv() []string {
 
 func (m *Manager) ensureUV(ctx context.Context, sources Sources) (string, error) {
 	uv := filepath.Join(m.root, "tools", "uv-"+uvVersion+".exe")
-	if !isFile(uv) {
-		if err := installUV(ctx, uv, sources.UV); err != nil {
-			return "", err
+	// A killed install can leave a partial download behind, even when the
+	// executable itself was already renamed into place.
+	if entries, err := os.ReadDir(filepath.Join(m.root, "tools")); err == nil {
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), ".uv-") {
+				_ = os.Remove(filepath.Join(m.root, "tools", entry.Name()))
+			}
 		}
 	}
-	return uv, nil
+	if isFile(uv) {
+		return uv, nil
+	}
+	// The accelerated preset takes uv from the same index as the packages; every
+	// other preset keeps the GitHub release archive.
+	if sources.Preset == "accelerated" {
+		address, err := uvWheelURL(ctx, sources.Index)
+		if err != nil {
+			return "", err
+		}
+		return uv, installUV(ctx, uv, address, uvWheelSHA256, uvWheelEntry)
+	}
+	address := sources.UV + "/" + uvVersion + "/" + uvArchive
+	return uv, installUV(ctx, uv, address, uvArchiveSHA256, uvArchiveEntry)
 }
 
 func (m *Manager) ensurePython(ctx context.Context, uv string, env []string, sources Sources) error {
@@ -293,6 +435,9 @@ func getDownload(ctx context.Context, address string) (*http.Response, error) {
 	}
 	resp, err := downloads.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, errors.New("任务已取消或超时")
+		}
 		return nil, errors.New("无法连接下载源")
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -302,36 +447,45 @@ func getDownload(ctx context.Context, address string) (*http.Response, error) {
 	return resp, nil
 }
 
-func installUV(ctx context.Context, target, source string) error {
-	// GitHub's digest for the release ZIP; mirrors need no connection to GitHub.
-	const expectedSHA256 = "ddbfcee1ac615a0499f6aa97b5ec8ebdf3ee4a7714a48055ec2ba0030e3cf810"
-	resp, err := getDownload(ctx, source+"/"+uvVersion+"/"+uvArchive)
+func installUV(ctx context.Context, target, address, expectedSHA256, entry string) error {
+	resp, err := getDownload(ctx, address)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	tmp, err := os.CreateTemp(filepath.Dir(target), ".uv-*.zip")
 	if err != nil {
-		return err
+		return errors.New("无法创建 uv 临时文件，请检查磁盘空间")
 	}
 	defer os.Remove(tmp.Name())
 	hash := sha256.New()
 	n, err := io.Copy(io.MultiWriter(tmp, hash), io.LimitReader(resp.Body, 64<<20))
 	closeErr := tmp.Close()
-	if err != nil || closeErr != nil || n == 64<<20 || expectedSHA256 != hex.EncodeToString(hash.Sum(nil)) {
+	if err != nil {
+		if ctx.Err() != nil {
+			return errors.New("任务已取消或超时")
+		}
+		return errors.New("无法完成 uv 下载，请检查网络或磁盘空间后重试")
+	}
+	if closeErr != nil {
+		return errors.New("无法写入 uv 临时文件，请检查磁盘空间")
+	}
+	if n == 64<<20 || expectedSHA256 != hex.EncodeToString(hash.Sum(nil)) {
 		return errors.New("uv 下载不完整或校验失败")
 	}
-	return extractUV(tmp.Name(), target)
+	return extractUV(tmp.Name(), target, entry)
 }
 
-func extractUV(archive, target string) error {
+func extractUV(archive, target, entry string) error {
 	r, err := zip.OpenReader(archive)
 	if err != nil {
-		return err
+		return errors.New("uv 压缩包无效")
 	}
 	defer r.Close()
 	for _, file := range r.File {
-		if (file.Name != "uv.exe" && file.Name != strings.TrimSuffix(uvArchive, ".zip")+"/uv.exe") || !file.Mode().IsRegular() {
+		// Only the pinned entry is extracted; anything else, including paths that
+		// try to escape the target directory, is skipped.
+		if file.Name != entry || !file.Mode().IsRegular() {
 			continue
 		}
 		if file.UncompressedSize64 > 96<<20 {
@@ -339,12 +493,12 @@ func extractUV(archive, target string) error {
 		}
 		in, err := file.Open()
 		if err != nil {
-			return err
+			return errors.New("无法读取 uv 压缩包")
 		}
 		defer in.Close()
 		out, err := os.CreateTemp(filepath.Dir(target), ".uv-*.exe")
 		if err != nil {
-			return err
+			return errors.New("无法创建 uv 临时文件，请检查磁盘空间")
 		}
 		defer os.Remove(out.Name())
 		_, err = io.Copy(out, in)
@@ -352,9 +506,12 @@ func extractUV(archive, target string) error {
 			err = closeErr
 		}
 		if err != nil {
-			return err
+			return errors.New("无法写入 uv 文件，请检查磁盘空间")
 		}
-		return os.Rename(out.Name(), target)
+		if err := os.Rename(out.Name(), target); err != nil {
+			return errors.New("无法保存 uv 可执行文件")
+		}
+		return nil
 	}
 	return errors.New("压缩包缺少 uv.exe")
 }
