@@ -31,6 +31,21 @@ const (
 // install from a fixture wheel; production code never writes it.
 var uvWheelSHA256 = "871e884c3329f69c12bb7426edb9e727745c3bb2db6d9e0538ce0e1bdfb64916"
 
+// userAgent identifies the launcher to mirrors. Some of them reject requests
+// carrying Go's default User-Agent ("Go-http-client/1.1") on their file paths,
+// so every download names the launcher instead.
+const userAgent = "NeoBot-Desktop"
+
+type userAgentTransport struct{ base http.RoundTripper }
+
+func (t userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("User-Agent") == "" {
+		req = req.Clone(req.Context())
+		req.Header.Set("User-Agent", userAgent)
+	}
+	return t.base.RoundTrip(req)
+}
+
 var downloads = &http.Client{
 	Timeout: 2 * time.Minute,
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -39,6 +54,7 @@ var downloads = &http.Client{
 		}
 		return nil
 	},
+	Transport: userAgentTransport{base: http.DefaultTransport},
 }
 
 func (m *Manager) Available() ([]Version, error) {

@@ -515,6 +515,22 @@ func TestEnsureUVAcceleratedInstallsFromWheel(t *testing.T) {
 	}
 }
 
+func TestDownloadsSendUserAgent(t *testing.T) {
+	var got string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+	}))
+	defer server.Close()
+	resp, err := downloads.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got != userAgent {
+		t.Fatalf("User-Agent = %q; want %q", got, userAgent)
+	}
+}
+
 func TestEnsureUVRemovesStaleTemporaryFiles(t *testing.T) {
 	root := t.TempDir()
 	toolsDir := filepath.Join(root, "tools")
