@@ -61,6 +61,9 @@ jobs:
         with: { go-version: '1.26', cache: true }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: choco install nsis -y --no-progress
+      - run: echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
+        shell: pwsh
       - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
       - run: wails build -platform windows/amd64 -nsis
       - uses: actions/upload-artifact@v4
