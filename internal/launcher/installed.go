@@ -18,6 +18,18 @@ func writeInstallRecord(dir string, record installRecord) error {
 	return writeJSON(filepath.Join(dir, ".installed"), record)
 }
 
+// Branch records written before repository selection refer to the upstream project.
+func (record installRecord) branchVersion(name string) (Version, bool) {
+	if record.Name != name || !validBranchName(record.Branch) {
+		return Version{}, false
+	}
+	repo, err := normalizeGitHubRepo(record.Repository)
+	if err != nil || repositoryBranchID(repo, record.Branch) != name {
+		return Version{}, false
+	}
+	return Version{Name: name, Branch: record.Branch, Repository: repo}, true
+}
+
 func (m *Manager) scanInstalled() error {
 	entries, err := os.ReadDir(filepath.Join(m.root, "versions"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -35,8 +47,8 @@ func (m *Manager) scanInstalled() error {
 		record, recordErr := readInstallRecord(dir)
 		if recordErr == nil && record.Name == name && isFile(m.binary(name)) {
 			if record.Branch != "" {
-				if validBranchName(record.Branch) && branchID(record.Branch) == name {
-					m.installed[name] = Version{Name: name, Branch: record.Branch}
+				if version, ok := record.branchVersion(name); ok {
+					m.installed[name] = version
 				}
 				continue
 			}

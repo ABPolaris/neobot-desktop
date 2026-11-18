@@ -27,7 +27,8 @@ body { margin: 0; }
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .page-heading h1.ant-typography { font-size: 28px; line-height: 1.2; margin: 0 0 5px; }
 .full { width: 100%; }
-.branch-input { flex: 1; min-width: 0; }
+.versions-heading { flex-wrap: wrap; }
+.version-name, .log-version { overflow-wrap: anywhere; }
 .branch-data-warning { display: block; max-width: 420px; font-size: 12px; line-height: 1.45; }
 .spaced { margin-top: 16px; }
 .data-dir { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }

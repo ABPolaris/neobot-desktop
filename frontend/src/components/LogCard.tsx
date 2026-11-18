@@ -3,6 +3,7 @@ import {App, Button, Card, Checkbox, Typography} from 'antd'
 import {GetLogs} from '../../wailsjs/go/main/App'
 import {ClipboardSetText} from '../../wailsjs/runtime/runtime'
 import type {launcher} from '../../wailsjs/go/models'
+import {displayBranch} from '../app/versionLabel'
 import {LauncherIcon} from './LauncherIcon'
 
 const logLevels = /^(?:(\d{2}:\d{2}:\d{2}(?:\.\d+)?|\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:?\d{2}|Z)?)([\t |]+))?(TRACE|DEBUG|INFO|SUCCESS|WARN(?:ING)?|ERROR|CRITICAL)(?=[\t |:]|$)/
@@ -14,7 +15,7 @@ function LogLine({line}: {line: string}) {
         <span className={`log-level log-level-${match[3].toLowerCase()}`}>{match[3]}</span>{line.slice(match[0].length)}</>
 }
 
-export function LogCard({running}: {running: boolean}) {
+export function LogCard({running, installed}: {running: boolean; installed: launcher.Version[]}) {
     const [logs, setLogs] = useState<launcher.LogSnapshot>()
     const [unavailable, setUnavailable] = useState(false)
     const [follow, setFollow] = useState(true)
@@ -72,7 +73,7 @@ export function LogCard({running}: {running: boolean}) {
         </div>
     }>
         {logs?.version && <Typography.Text className="log-version" type="secondary">
-            NeoBot {logs.branch ? '分支 ' + logs.branch : logs.version}
+            NeoBot {logs.branch ? displayBranch(logs.branch, installed.find(item => item.name === logs.version)?.repository) : logs.version}
         </Typography.Text>}
         {unavailable && <Typography.Text type="warning" role="status">暂时无法读取日志。</Typography.Text>}
         <div className="log-output" role="region" aria-label="NeoBot 日志" tabIndex={0} ref={region}

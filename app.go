@@ -91,20 +91,20 @@ func (a *App) Install(version string, official, start bool) error {
 	return m.Install(version, official, start)
 }
 
-func (a *App) InstallBranch(branch string, start, refresh bool) error {
+func (a *App) InstallBranch(repository, branch string, start, refresh bool) error {
 	m, err := a.get()
 	if err != nil {
 		return err
 	}
-	return m.InstallBranch(branch, start, refresh)
+	return m.InstallBranch(repository, branch, start, refresh)
 }
 
-func (a *App) ListGitHubBranches(force bool) ([]launcher.Branch, error) {
+func (a *App) ListGitHubBranches(repository string, force bool) ([]launcher.Branch, error) {
 	m, err := a.get()
 	if err != nil {
 		return nil, err
 	}
-	return m.ListGitHubBranches(force)
+	return m.ListGitHubBranches(repository, force)
 }
 
 func (a *App) SetVersionIsolation(enabled bool) error {

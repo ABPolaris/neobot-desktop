@@ -16,7 +16,7 @@ import (
 )
 
 func TestBranchNameValidation(t *testing.T) {
-	valid := []string{"main", "dev", "feat/at-args", "release/2.0", "a.b", "feat/x-y_z"}
+	valid := []string{"main", "dev", "feat/at-args", "release/2.0", "a.b", "feat/x-y_z", "feat/中文", "release+test"}
 	for _, name := range valid {
 		if !validBranchName(name) {
 			t.Fatalf("rejected valid branch %q", name)
@@ -24,7 +24,7 @@ func TestBranchNameValidation(t *testing.T) {
 	}
 	invalid := []string{
 		"", "../x", "a..b", "/a", "a/", "a//b", "a/.b", "a/b.lock",
-		"a\\b", "a b", "a~b", "-a", strings.Repeat("a", 201), "a@{b", "a:b",
+		"a\\b", "a b", "a~b", "-a", strings.Repeat("a", 201), "a@{b", "a:b", "@", "a^b", "a?b", "a*b", "a[b", "a\tb", "a\x7fb",
 	}
 	for _, name := range invalid {
 		if validBranchName(name) {
@@ -67,19 +67,30 @@ func TestBranchInstallRecordScanning(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	branch := branchID("feat/x")
-	makeInstall(branch, installRecord{Name: branch, Branch: "feat/x"})
+	const ref = "feat/x"
+	branch := branchID(ref)
+	makeInstall(branch, installRecord{Name: branch, Branch: ref}) // Legacy upstream record.
+	fork := repositoryBranchID("fork/neobot", ref)
+	makeInstall(fork, installRecord{Name: fork, Repository: "fork/neobot", Branch: ref})
+	mismatch := repositoryBranchID("other/neobot", ref)
+	makeInstall(mismatch, installRecord{Name: mismatch, Repository: "fork/neobot", Branch: ref})
 	makeInstall("1.2.3", installRecord{Name: "1.2.3", Preview: true})
 	makeInstall(branchID("bad"), installRecord{Name: branchID("bad"), Branch: "other"})
-	m.scanInstalled()
-	if version, ok := m.installed[branch]; !ok || version.Branch != "feat/x" || version.Preview {
-		t.Fatalf("branch install was not scanned: %+v", version)
+	if err := m.scanInstalled(); err != nil {
+		t.Fatal(err)
+	}
+	for id, repo := range map[string]string{branch: githubRepo, fork: "fork/neobot"} {
+		if got := m.installed[id]; got != (Version{Name: id, Branch: ref, Repository: repo}) {
+			t.Fatalf("scanned %s = %+v; want %s at %s", id, got, repo, ref)
+		}
 	}
 	if version, ok := m.installed["1.2.3"]; !ok || !version.Preview {
 		t.Fatalf("release install was not scanned: %+v", version)
 	}
-	if _, ok := m.installed[branchID("bad")]; ok {
-		t.Fatal("mismatched branch metadata was accepted")
+	for _, id := range []string{branchID("bad"), mismatch} {
+		if _, ok := m.installed[id]; ok {
+			t.Fatalf("accepted mismatched branch or repository for %s", id)
+		}
 	}
 }
 
@@ -234,25 +245,31 @@ func TestDownloadBranchArchive(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/dev.zip":
+		case "/contributor/neobot/archive/refs/heads/Feat/中文+#1.zip":
+			if r.RequestURI != "/contributor/neobot/archive/refs/heads/Feat/%E4%B8%AD%E6%96%87+%231.zip" {
+				t.Errorf("unexpected escaped archive path %s", r.RequestURI)
+			}
 			_, _ = w.Write(archive.Bytes())
-		case "/large.zip":
+		case "/contributor/neobot/archive/refs/heads/large.zip":
 			w.Header().Set("Content-Length", strconv.FormatInt(branchArchiveLimit+1, 10))
 			w.WriteHeader(http.StatusOK)
+		case "/contributor/neobot/archive/refs/heads/missing.zip":
+			http.NotFound(w, r)
 		default:
+			t.Errorf("unexpected archive path %s", r.URL.Path)
 			http.NotFound(w, r)
 		}
 	}))
 	defer server.Close()
 	githubArchiveBase = server.URL
 	target := filepath.Join(t.TempDir(), "source.zip")
-	if err := downloadBranchArchive(context.Background(), "missing", target); err == nil || !strings.Contains(err.Error(), "找不到分支") {
+	if err := downloadBranchArchive(context.Background(), "contributor/neobot", "missing", target); err == nil || !strings.Contains(err.Error(), "找不到分支") {
 		t.Fatalf("missing branch error: %v", err)
 	}
-	if err := downloadBranchArchive(context.Background(), "large", target); err == nil || !strings.Contains(err.Error(), "过大") {
+	if err := downloadBranchArchive(context.Background(), "contributor/neobot", "large", target); err == nil || !strings.Contains(err.Error(), "过大") {
 		t.Fatalf("oversized archive error: %v", err)
 	}
-	if err := downloadBranchArchive(context.Background(), "dev", target); err != nil {
+	if err := downloadBranchArchive(context.Background(), "contributor/neobot", "Feat/中文+#1", target); err != nil {
 		t.Fatal(err)
 	}
 	reader, err := zip.OpenReader(target)
@@ -266,12 +283,13 @@ func TestFetchGitHubBranches(t *testing.T) {
 	old := githubAPIBase
 	defer func() { githubAPIBase = old }()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/SuperQuail/NeoBot/branches" {
+		if r.URL.Path != "/repos/contributor/neobot/branches" || r.URL.Query().Get("per_page") != "100" {
+			t.Errorf("unexpected list URL %s", r.URL)
 			http.NotFound(w, r)
 			return
 		}
 		if r.URL.Query().Get("page") == "1" {
-			w.Header().Set("Link", `</repos/SuperQuail/NeoBot/branches?page=2>; rel="next"`)
+			w.Header().Set("Link", `</repos/contributor/neobot/branches?page=2>; rel="next"`)
 			_, _ = w.Write([]byte(`[{"name":"dev","commit":{"sha":"abc"}},{"name":"../bad"}]`))
 			return
 		}
@@ -279,7 +297,7 @@ func TestFetchGitHubBranches(t *testing.T) {
 	}))
 	defer server.Close()
 	githubAPIBase = server.URL
-	branches, err := fetchGitHubBranches(context.Background())
+	branches, err := fetchGitHubBranches(context.Background(), "contributor/neobot")
 	if err != nil || len(branches) != 2 || branches[0].Name != "main" || branches[1].Commit != "abc" {
 		t.Fatalf("branches = %+v, %v", branches, err)
 	}
@@ -299,7 +317,7 @@ func TestFetchGitHubBranchesRateLimited(t *testing.T) {
 	}))
 	defer server.Close()
 	githubAPIBase = server.URL
-	if _, err := fetchGitHubBranches(context.Background()); err == nil || !strings.Contains(err.Error(), "限流") {
+	if _, err := fetchGitHubBranches(context.Background(), githubRepo); err == nil || !strings.Contains(err.Error(), "限流") {
 		t.Fatalf("rate limit error: %v", err)
 	}
 }
@@ -501,15 +519,15 @@ func TestListGitHubBranchesCaches(t *testing.T) {
 	defer server.Close()
 	githubAPIBase = server.URL
 	m := &Manager{}
-	first, err := m.ListGitHubBranches(false)
+	first, err := m.ListGitHubBranches("", false)
 	if err != nil || len(first) != 1 || first[0].Name != "main" || first[0].Commit != "abc" {
 		t.Fatalf("first list = %+v, %v", first, err)
 	}
-	second, err := m.ListGitHubBranches(false)
+	second, err := m.ListGitHubBranches("", false)
 	if err != nil || len(second) != 1 || requests.Load() != 1 {
 		t.Fatalf("cache was not used: %+v, %v, requests=%d", second, err, requests.Load())
 	}
-	if _, err := m.ListGitHubBranches(true); err != nil || requests.Load() != 2 {
+	if _, err := m.ListGitHubBranches("", true); err != nil || requests.Load() != 2 {
 		t.Fatalf("forced refresh = %v, requests=%d", err, requests.Load())
 	}
 }
@@ -627,7 +645,7 @@ func TestFetchGitHubBranchesTooManyRequests(t *testing.T) {
 	}))
 	defer server.Close()
 	githubAPIBase = server.URL
-	if _, err := fetchGitHubBranches(context.Background()); err == nil || !strings.Contains(err.Error(), "限流") {
+	if _, err := fetchGitHubBranches(context.Background(), githubRepo); err == nil || !strings.Contains(err.Error(), "限流") {
 		t.Fatalf("429 was not mapped to a rate-limit error: %v", err)
 	}
 }

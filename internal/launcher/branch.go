@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,16 +15,13 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
-	githubRepo         = "SuperQuail/NeoBot"
-	branchCacheTTL     = 10 * time.Minute
-	branchAPILimit     = int64(1 << 20)
-	branchMaxPages     = 3
 	branchArchiveLimit = int64(256 << 20)
 	branchSourceLimit  = int64(2 << 30)
 	branchFileLimit    = int64(512 << 20)
@@ -33,43 +29,13 @@ const (
 )
 
 var (
-	githubAPIBase     = "https://api.github.com"
-	githubArchiveBase = "https://github.com/SuperQuail/NeoBot/archive/refs/heads"
-)
-
-var (
-	branchNamePattern = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 	branchIDPattern   = regexp.MustCompile(`^branch-[a-z0-9_][a-z0-9._-]{0,39}-[0-9a-f]{8}$`)
 	branchSlugPattern = regexp.MustCompile(`[^a-z0-9._-]+`)
 )
 
-var githubAPIHTTP = &http.Client{
-	Timeout: 10 * time.Second,
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if req.URL.Scheme != "https" || len(via) >= 10 {
-			return errors.New("无效的 GitHub 重定向")
-		}
-		return nil
-	},
-}
-
-var branchDownloadHTTP = &http.Client{
-	Timeout: 10 * time.Minute,
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if req.URL.Scheme != "https" || len(via) >= 10 {
-			return errors.New("无效的下载重定向")
-		}
-		return nil
-	},
-}
-
-type Branch struct {
-	Name   string `json:"name"`
-	Commit string `json:"commit,omitempty"`
-}
-
 func validBranchName(name string) bool {
-	if name == "" || len(name) > 200 || !branchNamePattern.MatchString(name) {
+	if name == "" || len(name) > 200 || !utf8.ValidString(name) || name == "@" ||
+		strings.ContainsAny(name, " ~^:?*[\\") || strings.ContainsFunc(name, unicode.IsControl) {
 		return false
 	}
 	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") ||
@@ -106,114 +72,50 @@ func isBranchID(name string) bool {
 	return branchIDPattern.MatchString(name)
 }
 
-func (m *Manager) ListGitHubBranches(force bool) ([]Branch, error) {
-	m.mu.Lock()
-	cached := append([]Branch(nil), m.branches...)
-	fetchedAt := m.branchesAt
-	m.mu.Unlock()
-	if !force && len(cached) > 0 && time.Since(fetchedAt) < branchCacheTTL {
-		return cached, nil
-	}
-	branches, err := fetchGitHubBranches(context.Background())
-	if err != nil {
-		if len(cached) > 0 && !force {
-			return cached, nil
-		}
-		return nil, err
-	}
-	m.mu.Lock()
-	m.branches, m.branchesAt = branches, time.Now()
-	m.mu.Unlock()
-	return branches, nil
-}
-
-func fetchGitHubBranches(ctx context.Context) ([]Branch, error) {
-	var result []Branch
-	seen := make(map[string]bool)
-	base := strings.TrimRight(githubAPIBase, "/")
-	for page := 1; page <= branchMaxPages; page++ {
-		address := fmt.Sprintf("%s/repos/%s/branches?per_page=100&page=%d", base, githubRepo, page)
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
-		if err != nil {
-			return nil, errors.New("无法获取分支列表，请检查网络后重试")
-		}
-		request.Header.Set("Accept", "application/vnd.github+json")
-		request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		request.Header.Set("User-Agent", "neobot-desktop")
-		response, err := githubAPIHTTP.Do(request)
-		if err != nil {
-			return nil, errors.New("无法获取分支列表，请检查网络后重试")
-		}
-		if response.StatusCode == http.StatusTooManyRequests ||
-			(response.StatusCode == http.StatusForbidden &&
-				(response.Header.Get("X-RateLimit-Remaining") == "0" || response.Header.Get("Retry-After") != "")) {
-			response.Body.Close()
-			return nil, errors.New("GitHub 分支列表暂时不可用（接口限流），可直接输入分支名")
-		}
-		if response.StatusCode == http.StatusForbidden {
-			response.Body.Close()
-			return nil, errors.New("无法获取分支列表，请检查网络后重试")
-		}
-		if response.StatusCode != http.StatusOK {
-			response.Body.Close()
-			return nil, fmt.Errorf("GitHub 返回 HTTP %d，无法获取分支列表", response.StatusCode)
-		}
-		var items []struct {
-			Name   string `json:"name"`
-			Commit struct {
-				SHA string `json:"sha"`
-			} `json:"commit"`
-		}
-		decodeErr := json.NewDecoder(io.LimitReader(response.Body, branchAPILimit)).Decode(&items)
-		next := strings.Contains(response.Header.Get("Link"), `rel="next"`)
-		response.Body.Close()
-		if decodeErr != nil {
-			return nil, errors.New("无法解析 GitHub 分支列表")
-		}
-		for _, item := range items {
-			if !validBranchName(item.Name) || seen[item.Name] {
-				continue
-			}
-			seen[item.Name] = true
-			result = append(result, Branch{Name: item.Name, Commit: item.Commit.SHA})
-		}
-		if !next {
-			break
-		}
-	}
-	if len(result) == 0 {
-		return nil, errors.New("没有找到可用的 GitHub 分支")
-	}
-	sort.Slice(result, func(i, j int) bool {
-		if (result[i].Name == "main") != (result[j].Name == "main") {
-			return result[i].Name == "main"
-		}
-		return result[i].Name < result[j].Name
-	})
-	return result, nil
-}
-
-func (m *Manager) InstallBranch(branch string, start, refresh bool) error {
-	if !supported() {
-		return errors.New("首版仅支持 Windows x64")
-	}
-	branch = strings.TrimSpace(branch)
-	if !validBranchName(branch) {
-		return errors.New("请输入有效的 GitHub 分支名")
-	}
-	id := branchID(branch)
-	m.mu.Lock()
+// checkBranchInstall checks the shared state before starting an installation. Caller holds m.mu.
+func (m *Manager) checkBranchInstall(start bool) error {
 	if m.closing || m.job.State == "running" {
-		m.mu.Unlock()
 		return errors.New("已有安装任务正在运行")
 	}
 	if m.preparing || m.stopping {
-		m.mu.Unlock()
 		return errors.New("请等待当前启动任务结束")
 	}
-	if start && (m.bot != nil || m.preparing) {
-		m.mu.Unlock()
+	if start && m.bot != nil {
 		return errors.New("请先停止正在运行的 NeoBot")
+	}
+	return nil
+}
+
+func (m *Manager) InstallBranch(repository, branch string, start, refresh bool) error {
+	if !supported() {
+		return errors.New("首版仅支持 Windows x64")
+	}
+	repository, err := normalizeGitHubRepo(repository)
+	if err != nil {
+		return err
+	}
+	// Trim paste whitespace that cannot occur in a Git ref.
+	branch = strings.Trim(branch, " \t\r\n\v\f")
+	if branch == "" {
+		m.mu.Lock()
+		err = m.checkBranchInstall(start)
+		m.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		// Resolve without holding the manager lock, then recheck state below.
+		branch, err = fetchGitHubDefaultBranch(context.Background(), repository)
+		if err != nil {
+			return err
+		}
+	} else if !validBranchName(branch) {
+		return errors.New("请输入有效的 GitHub 分支名")
+	}
+	id := repositoryBranchID(repository, branch)
+	m.mu.Lock()
+	if err := m.checkBranchInstall(start); err != nil {
+		m.mu.Unlock()
+		return err
 	}
 	_, installed := m.installed[id]
 	if installed && !refresh {
@@ -226,7 +128,7 @@ func (m *Manager) InstallBranch(branch string, start, refresh bool) error {
 		}
 		return m.Start(false)
 	}
-	if installed && m.bot != nil && m.bot.version == id {
+	if m.bot != nil && m.bot.version == id {
 		m.mu.Unlock()
 		return errors.New("请先停止正在运行的分支版本")
 	}
@@ -235,17 +137,17 @@ func (m *Manager) InstallBranch(branch string, start, refresh bool) error {
 	done := make(chan struct{})
 	m.jobDone = done
 	sources := m.state.Sources
-	m.job = Job{Version: id, Branch: branch, Step: "uv", State: "running", Total: 4, StartAfter: start}
+	m.job = Job{Version: id, Repository: repository, Branch: branch, Step: "uv", State: "running", Total: 4, StartAfter: start}
 	m.mu.Unlock()
 	m.notify()
 
 	go func() {
 		defer cancel()
 		defer close(done)
-		err := m.installBranch(ctx, branch, id, refresh, sources)
+		err := m.installBranch(ctx, repository, branch, id, refresh, sources)
 		m.mu.Lock()
 		if err == nil {
-			m.installed[id] = Version{Name: id, Branch: branch}
+			m.installed[id] = Version{Name: id, Repository: repository, Branch: branch}
 			if start || m.state.Selected == "" {
 				before := m.state.Selected
 				m.state.Selected = id
@@ -261,7 +163,8 @@ func (m *Manager) InstallBranch(branch string, start, refresh bool) error {
 			// A failed refresh may have left target unusable. Do not keep
 			// offering to start a half-installed version in this session.
 			record, recordErr := readInstallRecord(m.versionDir(id))
-			if recordErr != nil || record.Name != id ||
+			version, valid := record.branchVersion(id)
+			if recordErr != nil || !valid || version.Repository != repository || version.Branch != branch ||
 				!isFile(m.binary(id)) || !isFile(filepath.Join(m.versionDir(id), "Scripts", "python.exe")) {
 				delete(m.installed, id)
 				if m.state.Selected == id {
@@ -283,7 +186,7 @@ func (m *Manager) InstallBranch(branch string, start, refresh bool) error {
 	return nil
 }
 
-func (m *Manager) installBranch(ctx context.Context, branch, id string, refresh bool, sources Sources) (err error) {
+func (m *Manager) installBranch(ctx context.Context, repository, branch, id string, refresh bool, sources Sources) (err error) {
 	for _, dir := range []string{"tools", "python", "cache", "tmp", "versions"} {
 		if err = os.MkdirAll(filepath.Join(m.root, dir), 0700); err != nil {
 			return errors.New("无法创建安装目录，请检查磁盘空间")
@@ -307,7 +210,7 @@ func (m *Manager) installBranch(ctx context.Context, branch, id string, refresh 
 	}
 	defer os.RemoveAll(work)
 	archive := filepath.Join(work, "source.zip")
-	if err = downloadBranchArchive(ctx, branch, archive); err != nil {
+	if err = downloadBranchArchive(ctx, repository, branch, archive); err != nil {
 		return err
 	}
 	source, err := extractBranchSource(ctx, archive, filepath.Join(work, "src"))
@@ -357,7 +260,7 @@ func (m *Manager) installBranch(ctx context.Context, branch, id string, refresh 
 	if !isFile(m.binary(id)) {
 		return errors.New("安装完成后没有找到分支版本的启动程序")
 	}
-	if err = writeInstallRecord(target, installRecord{Name: id, Branch: branch}); err != nil {
+	if err = writeInstallRecord(target, installRecord{Name: id, Repository: repository, Branch: branch}); err != nil {
 		return errors.New("无法写入分支安装记录，请检查磁盘空间")
 	}
 	if refresh {
@@ -396,8 +299,8 @@ func runBranchSync(ctx context.Context, uv string, env []string, source, target 
 	return nil
 }
 
-func downloadBranchArchive(ctx context.Context, branch, target string) error {
-	address := strings.TrimRight(githubArchiveBase, "/") + "/" + escapeBranchPath(branch) + ".zip"
+func downloadBranchArchive(ctx context.Context, repository, branch, target string) error {
+	address := strings.TrimRight(githubArchiveBase, "/") + "/" + repository + "/archive/refs/heads/" + escapeBranchPath(branch) + ".zip"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return errors.New("无法连接 GitHub 下载源码")

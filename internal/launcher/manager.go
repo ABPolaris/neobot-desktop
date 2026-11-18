@@ -49,28 +49,34 @@ type Job struct {
 	Message    string `json:"message"`
 	Version    string `json:"version"`
 	Branch     string `json:"branch,omitempty"`
+	Repository string `json:"repository,omitempty"`
 	Completed  int    `json:"completed"`
 	Total      int    `json:"total"`
 	StartAfter bool   `json:"start_after"`
 }
 
 type Version struct {
-	Name    string `json:"name"`
-	Preview bool   `json:"preview"`
-	Branch  string `json:"branch,omitempty"`
+	Name       string `json:"name"`
+	Preview    bool   `json:"preview"`
+	Branch     string `json:"branch,omitempty"`
+	Repository string `json:"repository,omitempty"`
 }
 
 func (v Version) Label() string {
-	if v.Branch != "" {
+	if v.Branch == "" {
+		return v.Name
+	}
+	if v.Repository == "" || v.Repository == githubRepo {
 		return "分支 " + v.Branch
 	}
-	return v.Name
+	return "分支 " + v.Repository + "@" + v.Branch
 }
 
 type installRecord struct {
-	Name    string `json:"name"`
-	Preview bool   `json:"preview"`
-	Branch  string `json:"branch,omitempty"`
+	Name       string `json:"name"`
+	Preview    bool   `json:"preview"`
+	Branch     string `json:"branch,omitempty"`
+	Repository string `json:"repository,omitempty"`
 }
 
 type Snapshot struct {
@@ -119,6 +125,7 @@ type Manager struct {
 	setupSupported bool
 	dashboardURL   string
 	releaseLock    func()
+	branchRepo     string
 	branches       []Branch
 	branchesAt     time.Time
 }
@@ -257,6 +264,9 @@ func (m *Manager) Snapshot() Snapshot {
 			return a.Branch == ""
 		}
 		if a.Branch != "" {
+			if a.Branch == b.Branch {
+				return a.Repository < b.Repository
+			}
 			return a.Branch < b.Branch
 		}
 		return compareVersions(a.Name, b.Name) > 0

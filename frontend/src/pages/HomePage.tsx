@@ -47,13 +47,17 @@ export function HomePage() {
             <div className="launch-emblem"><LauncherIcon name="bot" size={43} /></div>
             <label className="version-label" htmlFor="launch-version">{active && state.running !== state.selected ? '下次启动版本' : '当前版本'}</label>
             <Select id="launch-version" aria-label="选择启动版本" className="launch-select" size="large" virtual={false} value={state.selected || undefined}
+                popupMatchSelectWidth={false} styles={{popup: {root: {maxWidth: 'calc(100vw - 32px)'}}}}
                 placeholder="尚未选择版本" disabled={state.starting || state.stopping || installing || !state.installed.length}
                 onChange={version => void action(() => SelectVersion(version))}
-                options={state.installed.map(item => ({value: item.name, label: <span className="version-option">
-                    <span>{displayVersion(item)}</span>{item.branch
-                        ? <Tag color="purple">GitHub</Tag>
-                        : <Tag color={item.preview ? 'orange' : 'green'}>{item.preview ? '预览版' : '稳定版'}</Tag>}
-                </span>}))} />
+                options={state.installed.map(item => {
+                    const label = displayVersion(item)
+                    return {value: item.name, title: label, label: <span className="version-option" title={label}>
+                        <span>{label}</span>{item.branch
+                            ? <Tag color="purple">GitHub</Tag>
+                            : <Tag color={item.preview ? 'orange' : 'green'}>{item.preview ? '预览版' : '稳定版'}</Tag>}
+                    </span>}
+                })} />
             <div className="launch-state" role="status"><Status tone={runtimeTone}>{runtimeStatus}</Status>
                 {active && state.running !== state.selected && <span className="running-version">
                     正在运行 {displayVersionName(state.running, state.installed)}
@@ -92,7 +96,7 @@ export function HomePage() {
             </div>
             <RuntimeError />
             <JobCard />
-            <LogCard key={state.log_run} running={active || state.starting} />
+            <LogCard key={state.log_run} running={active || state.starting} installed={state.installed} />
         </section>
     </div>
 }
