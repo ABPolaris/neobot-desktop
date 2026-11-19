@@ -8,6 +8,9 @@ import (
 	"os/exec"
 )
 
+func freeDiskSpace(string) (int64, error) {
+	return 0, errors.New("暂不支持读取磁盘剩余空间")
+}
 func hideWindow(*exec.Cmd)                    {}
 func replaceFile(source, target string) error { return os.Rename(source, target) }
 func lockInstance(string) (func(), error)     { return nil, errors.New("首版仅支持 Windows x64") }

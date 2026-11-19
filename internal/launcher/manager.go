@@ -33,6 +33,9 @@ const (
 	mirrorIndex   = "https://pypi.tuna.tsinghua.edu.cn/simple"
 )
 
+// versionTrashName 匹配卸载中转目录：<版本名>.trash-<16~20 位纳秒>。
+var versionTrashName = regexp.MustCompile(`^.+\.trash-[0-9]{16,20}$`)
+
 var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:(a|b|rc)(0|[1-9][0-9]{0,8}))?$`)
 var simpleLink = regexp.MustCompile(`(?i)<a\s+[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>`)
 
@@ -80,22 +83,26 @@ type installRecord struct {
 }
 
 type Snapshot struct {
-	Installed      []Version   `json:"installed"`
-	Selected       string      `json:"selected"`
-	Running        string      `json:"running"`
-	Starting       bool        `json:"starting"`
-	Stopping       bool        `json:"stopping"`
-	RuntimeError   string      `json:"runtime_error"`
-	LogRun         uint64      `json:"log_run"`
-	Recommended    string      `json:"recommended"`
-	Sources        Sources     `json:"sources"`
-	Job            Job         `json:"job"`
-	Setup          SetupStatus `json:"setup"`
-	SetupSupported bool        `json:"setup_supported"`
-	DashboardURL   string      `json:"dashboard_url"`
-	IsolateData    bool        `json:"isolate_data"`
-	DataDir        string      `json:"data_dir"`
-	LauncherLogDir string      `json:"launcher_log_dir"`
+	Installed      []Version        `json:"installed"`
+	Selected       string           `json:"selected"`
+	Running        string           `json:"running"`
+	Starting       bool             `json:"starting"`
+	Stopping       bool             `json:"stopping"`
+	RuntimeError   string           `json:"runtime_error"`
+	LogRun         uint64           `json:"log_run"`
+	Recommended    string           `json:"recommended"`
+	Sources        Sources          `json:"sources"`
+	Job            Job              `json:"job"`
+	Setup          SetupStatus      `json:"setup"`
+	SetupSupported bool             `json:"setup_supported"`
+	DashboardURL   string           `json:"dashboard_url"`
+	IsolateData    bool             `json:"isolate_data"`
+	DataDir        string           `json:"data_dir"`
+	LauncherLogDir string           `json:"launcher_log_dir"`
+	Usage          Usage            `json:"usage"`
+	Health         Health           `json:"health"`
+	Update         UpdateStatus     `json:"update"`
+	Supervisor     SupervisorStatus `json:"supervisor"`
 }
 
 type diskState struct {
@@ -104,6 +111,11 @@ type diskState struct {
 	DataVersion string            `json:"data_version"`
 	Backups     map[string]string `json:"backups"`
 	IsolateData bool              `json:"isolate_data"`
+	AutoRestart bool              `json:"auto_restart"`
+	Autostart   bool              `json:"autostart"`
+	CloseToTray bool              `json:"close_to_tray"`
+	// CloseToTraySet 区分「用户明确关掉」和「还没设置过」：没设置过时默认收进托盘。
+	CloseToTraySet bool `json:"close_to_tray_set"`
 }
 
 type Manager struct {
@@ -130,7 +142,16 @@ type Manager struct {
 	branches       []Branch
 	branchesAt     time.Time
 
-	logState *launcherLogState
+	usage      Usage
+	usageBusy  bool
+	health     Health
+	healthBusy bool
+	update     UpdateStatus
+	updateBusy bool
+	crashCount int
+	lastCrash  string
+	trayReady  bool
+	logState   *launcherLogState
 }
 
 func Open(root string, changed func()) (*Manager, error) {
@@ -165,6 +186,11 @@ func Open(root string, changed func()) (*Manager, error) {
 	if state.Backups == nil {
 		state.Backups = map[string]string{}
 	}
+	// 新装用户默认「关闭窗口 = 收进托盘」：这是常驻型工具该有的默认值。
+	// 关掉的用户会被 CloseToTraySet 记住，不会每次启动又被改回来。
+	if !state.CloseToTraySet && !state.CloseToTray {
+		state.CloseToTray, state.CloseToTraySet = true, true
+	}
 	m.state = state
 	if m.state.DataVersion != "" &&
 		(!versionPattern.MatchString(m.state.DataVersion) || versionOf(m.state.DataVersion).Preview) {
@@ -186,6 +212,7 @@ func Open(root string, changed func()) (*Manager, error) {
 	}
 	// A hard shutdown can leave a half-extracted branch source behind.
 	_ = os.RemoveAll(filepath.Join(root, "tmp"))
+	m.cleanVersionTrash()
 	m.migratePreviewData()
 	if scanErr := m.scanInstalled(); scanErr != nil {
 		m.runtimeError = "无法读取已安装版本，请检查数据目录权限"
@@ -261,10 +288,11 @@ func (m *Manager) Snapshot() Snapshot {
 	defer m.mu.Unlock()
 	s := Snapshot{
 		Installed: make([]Version, 0, len(m.installed)), Selected: m.state.Selected, Job: m.job,
-		Recommended: recommendedVersion, Sources: m.state.Sources, Setup: m.setup,
+		Recommended: m.recommended(), Sources: m.state.Sources, Setup: m.setup,
 		SetupSupported: m.setupSupported, DashboardURL: m.dashboardURL, Stopping: m.stopping,
 		RuntimeError: m.runtimeError, Starting: m.preparing, LogRun: m.logRun, IsolateData: m.state.IsolateData,
-		LauncherLogDir: m.launcherLogDir(),
+		Usage: m.usage, Health: m.health, Update: m.update,
+		Supervisor: m.supervisorStatus(), LauncherLogDir: m.launcherLogDir(),
 	}
 	for _, v := range m.installed {
 		s.Installed = append(s.Installed, v)
@@ -292,6 +320,18 @@ func (m *Manager) Snapshot() Snapshot {
 	}
 	s.DataDir = m.dataDir(inUse)
 	return s
+}
+
+// supervisorStatus 汇总常驻服务状态。调用方持有 m.mu。
+func (m *Manager) supervisorStatus() SupervisorStatus {
+	return SupervisorStatus{
+		AutoRestart: m.state.AutoRestart,
+		Autostart:   m.state.Autostart,
+		CloseToTray: m.state.CloseToTray,
+		CrashCount:  m.crashCount,
+		LastCrash:   m.lastCrash,
+		TrayReady:   m.trayReady,
+	}
 }
 
 // dataDir is where the given version keeps its data. An isolated version owns
@@ -392,10 +432,17 @@ func (m *Manager) Close() {
 	jobDone := m.jobDone
 	m.mu.Unlock()
 	if jobDone != nil {
-		<-jobDone
+		// 取消安装/修复不一定立刻生效（uv 要先把子进程收掉），退出最多等 5 秒，
+		// 不能让窗口关了而进程无声挂在那里。
+		select {
+		case <-jobDone:
+		case <-time.After(5 * time.Second):
+		}
 	}
 	_ = m.Stop(true)
 	m.closeLauncherLog()
+	// crashTimes 以 *Manager 为键，不清理会跟着进程一直留着。
+	crashTimes.Delete(m)
 	m.releaseLock()
 }
 
@@ -439,3 +486,59 @@ func writeJSON(path string, value any) error {
 
 func supported() bool { return runtime.GOOS == "windows" && runtime.GOARCH == "amd64" }
 func timeID() string  { return strconv.FormatInt(time.Now().UnixNano(), 10) }
+
+// cleanVersionTrash 清理卸载版本时中断留下的中转目录。
+// 卸载走 rename-then-delete，进程如果在中间被杀就会留下 <name>.trash-<纳秒>；
+// 这些目录既不算已安装、也不会被磁盘统计覆盖，只能在启动时顺手清掉。
+// .old-* 和 .broken-* 由 recoverVersionDirs 负责，这里绝不能碰。
+func (m *Manager) cleanVersionTrash() {
+	entries, err := os.ReadDir(filepath.Join(m.root, "versions"))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !versionTrashName.MatchString(name) {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(m.root, "versions", name))
+	}
+}
+
+// MarkTrayReady 记录托盘是否可用，供界面显示「关闭窗口后仍会后台运行」。
+func (m *Manager) MarkTrayReady(ready bool) {
+	m.mu.Lock()
+	m.trayReady = ready
+	m.mu.Unlock()
+	m.notify()
+}
+
+// Folder 返回启动器各类目录的绝对路径，供「打开文件夹」使用。
+func (m *Manager) Folder(kind string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inUse := m.state.Selected
+	if m.bot != nil {
+		inUse = m.bot.version
+	}
+	switch kind {
+	case "root":
+		return m.root, nil
+	case "data":
+		return m.dataDir(inUse), nil
+	case "versions":
+		return filepath.Join(m.root, "versions"), nil
+	case "backups":
+		return filepath.Join(m.root, "backups"), nil
+	case "logs":
+		return m.launcherLogDir(), nil
+	case "host_logs":
+		return filepath.Join(m.dataDir(inUse), "logs"), nil
+	case "diagnostics":
+		return filepath.Join(m.root, "diagnostics"), nil
+	case "plugins":
+		return filepath.Join(m.dataDir(inUse), "plugins"), nil
+	default:
+		return "", errors.New("未知的目录类型")
+	}
+}

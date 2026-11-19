@@ -11,6 +11,19 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// freeDiskSpace 返回给定路径所在卷对当前用户可用的剩余字节数。
+func freeDiskSpace(path string) (int64, error) {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+	var free, total, available uint64
+	if err := windows.GetDiskFreeSpaceEx(p, &free, &total, &available); err != nil {
+		return 0, err
+	}
+	return int64(free), nil
+}
+
 func hideWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 }

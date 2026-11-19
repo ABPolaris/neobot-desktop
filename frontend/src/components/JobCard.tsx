@@ -1,7 +1,7 @@
 import {useState} from 'react'
 import {Alert, Button, Card, Progress, Space} from 'antd'
-import {Link} from 'react-router'
-import {Install, InstallBranch} from '../../wailsjs/go/main/App'
+import {Link, useNavigate} from 'react-router'
+import {Install, InstallBranch, RefreshHealth} from '../../wailsjs/go/main/App'
 import {useLauncher} from '../app/LauncherProvider'
 import {displayBranch} from '../app/versionLabel'
 
@@ -37,6 +37,13 @@ export function JobCard() {
 }
 
 export function RuntimeError() {
-    const {state} = useLauncher()
-    return state?.runtime_error ? <Alert type="error" showIcon title={state.runtime_error} /> : null
+    const {state, action} = useLauncher()
+    const navigate = useNavigate()
+    if (!state?.runtime_error) return null
+    // 出问题时把「体检」直接推到眼前：诊断页平时不需要用户主动去想。
+    return <Alert type="error" showIcon title={state.runtime_error}
+        action={<Button size="small" onClick={() => {
+            void action(() => RefreshHealth())
+            navigate('/diagnostics')
+        }}>运行体检</Button>} />
 }

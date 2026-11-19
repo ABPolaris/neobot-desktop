@@ -7,6 +7,7 @@ import {displayBranch} from '../app/versionLabel'
 import {GitHubInstallModal} from '../components/GitHubInstallModal'
 import {JobCard} from '../components/JobCard'
 import {LauncherIcon} from '../components/LauncherIcon'
+import {VersionActions} from '../components/VersionActions'
 
 export function VersionsPage() {
     const {state, action} = useLauncher()
@@ -47,6 +48,11 @@ export function VersionsPage() {
                         onClick={() => void action(() => SelectVersion(item.name))}>设为启动版本</Button>
                     : <Button key="download" disabled={downloading}
                         onClick={() => void action(() => Install(item.name, false, false))}>下载</Button>)
+                if (installed) {
+                    // 修复要重装依赖、卸载会删目录：两者都不能和运行中的实例或任务并发。
+                    actions.push(<VersionActions key="manage" item={item}
+                        disabled={downloading || snapshot.starting || snapshot.stopping || snapshot.running === item.name} />)
+                }
                 return <List.Item actions={actions}>
                     <Space wrap>
                         <strong className="version-name">{item.branch ? displayBranch(item.branch, item.repository) : item.name}</strong>

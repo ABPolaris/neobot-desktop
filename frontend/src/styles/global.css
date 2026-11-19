@@ -109,3 +109,77 @@ body { margin: 0; }
     .launcher-home { grid-template-columns: minmax(0, 1fr); }
     .launch-pane { border-right: 0; border-bottom: 1px solid #cfe3f8; }
 }
+
+/* ── 设置类卡片的信息行布局 ─────────────────────────────────────
+   统一「左侧标题+说明 / 右侧控件」的行式结构：卡片不再是一叠段落，
+   而是可扫视的列表。行与行之间用 1px 分隔线，靠间距而不是边框分组。 */
+.stack-card .ant-card-head, .form-card .ant-card-head { padding-inline: 18px; min-height: 44px; }
+.form-card .ant-card-head-title { font-size: 14px; font-weight: 650; color: #14233b; }
+.form-card .ant-card-body { padding: 16px 18px; }
+.stack-card .ant-card-head-title { font-size: 14px; font-weight: 650; color: #14233b; }
+.stack-card .ant-card-body { padding: 0; }
+.info-row { display: flex; align-items: center; gap: 18px; padding: 12px 18px; }
+.info-row + .info-row { border-top: 1px solid #f1f5f9; }
+.info-row-main { flex: 1; min-width: 0; }
+.info-row-title { font-size: 14px; font-weight: 600; line-height: 1.45; color: #15213a; }
+.info-row-hint { margin-top: 3px; font-size: 12px; line-height: 1.55; color: #64748b; }
+.info-row-side { flex: none; display: flex; align-items: center; gap: 10px; }
+.info-row-value { font-size: 13px; font-weight: 600; color: #334155; font-variant-numeric: tabular-nums; }
+
+/* 数字一律等宽，右对齐时不会跳 */
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* 状态点：颜色 + 文案一起表意，不只靠颜色 */
+.state-dot { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; }
+.state-dot i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.tone-ok { color: #14723a; }
+.tone-warn { color: #8a530d; }
+.tone-fail { color: #a92b23; }
+.tone-idle { color: #52637a; }
+
+/* 存储卡：一个数字、一条比例条、两列图例 —— 先看总量，再看构成 */
+.storage-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px 18px 0; flex-wrap: wrap; }
+.storage-total { font-size: 26px; font-weight: 650; line-height: 1.1; color: #0f172a; letter-spacing: -.01em; }
+.storage-total small { margin-left: 7px; font-size: 12px; font-weight: 500; color: #64748b; letter-spacing: 0; }
+.storage-sub { margin-top: 4px; font-size: 12px; color: #64748b; }
+.storage-bar { display: flex; height: 8px; margin: 14px 18px 0; border-radius: 999px; overflow: hidden; background: #eef2f8; }
+.storage-bar > span { display: block; height: 100%; min-width: 2px; }
+.storage-bar > span + span { box-shadow: inset 1px 0 0 #fff; }
+.storage-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 26px; padding: 12px 18px 0; }
+.storage-legend-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 0; font-size: 13px; }
+.storage-legend-row > span:first-child { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+.storage-legend-row > em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; color: #475569; }
+.storage-legend-row > b { margin-left: auto; font-weight: 600; color: #334155; font-variant-numeric: tabular-nums; }
+.storage-legend-row.is-muted > em, .storage-legend-row.is-muted > b { color: #94a3b8; font-weight: 500; }
+.card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px 18px 16px; margin-top: 10px; border-top: 1px solid #f1f5f9; }
+.card-actions .ant-btn-link { padding-inline: 4px; }
+.card-empty { padding: 14px 18px 4px; font-size: 13px; color: #64748b; }
+/* 卡片底部的弱化链接行：不用分隔线，也不抢状态行的注意力 */
+.about-links { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; padding: 2px 18px 15px; font-size: 12px; }
+/* 设置页页脚：关于类链接统一落在页面最下方，不占卡片空间 */
+.settings-footer { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 18px; margin: 2px 4px 10px; font-size: 12px; }
+/* 日志区始终撑满整列：它是首页的主体，不随内容多少变化高度。 */
+
+/* 体检：两列网格，异常项才展开细节，正常项只占一行 */
+/* 体检内容区固定高度：三种状态（未体检 / 进行中 / 有结果）卡片高度一致，避免页面跳 */
+.health-body { height: 208px; overflow-y: auto; overscroll-behavior: contain; }
+/* 标题栏动作区：导出结果也放这里，按钮本身不改变标题栏高度，卡片不会因此变高 */
+.health-actions { display: flex; align-items: center; gap: 8px; }
+.health-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    height: 100%; padding: 0 32px; text-align: center; font-size: 13px; line-height: 1.6; color: #64748b; }
+.health-meta { padding: 8px 18px 8px; font-size: 12px; color: #94a3b8; }
+.health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 26px; padding: 4px 18px 6px; }
+.health-item { display: flex; align-items: baseline; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f8fafc; font-size: 13px; }
+.health-item > i { flex: none; width: 7px; height: 7px; border-radius: 50%; transform: translateY(-1px); }
+.health-item > em { font-style: normal; font-weight: 600; color: #15213a; white-space: nowrap; }
+.health-item > span { margin-left: auto; font-size: 12px; white-space: nowrap; }
+.health-detail { grid-column: 1 / -1; padding: 2px 0 10px 15px; font-size: 12px; line-height: 1.6; color: #64748b; overflow-wrap: anywhere; }
+
+/* 键值行：版本号、路径这类「名称 → 值」的信息 */
+.kv-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 6px 14px; }
+.kv-grid dt { font-size: 13px; color: #64748b; }
+.kv-grid dd { margin: 0; font-size: 13px; font-weight: 600; color: #15213a; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+    .storage-legend, .health-grid { grid-template-columns: minmax(0, 1fr); }
+}

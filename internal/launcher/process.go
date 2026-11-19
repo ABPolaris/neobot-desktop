@@ -23,6 +23,9 @@ type botProcess struct {
 	closeTree   func()
 	ready       bool
 	reportedURL string
+	// expected 记录这次退出是不是用户主动停止（或启动器关闭）造成的，
+	// 退出清理会把 m.stopping 复位，之后的自动重启判断只能依赖这个快照。
+	expected bool
 }
 
 var (
@@ -174,12 +177,14 @@ func (m *Manager) start(version string, confirmed bool) {
 			} else {
 				m.logMessage(fmt.Sprintf("NeoBot 已退出（退出码 %d）。", cmd.ProcessState.ExitCode()))
 			}
+			p.expected = p.expected || m.stopping || m.closing
 			m.bot, m.stopping, m.setupSupported = nil, false, false
 			m.setup, m.dashboardURL = SetupStatus{}, ""
 		}
 		close(p.done)
 		m.mu.Unlock()
 		m.notify()
+		m.afterExit(p, err)
 	}()
 	go m.poll(p)
 }
@@ -317,6 +322,9 @@ func (m *Manager) Stop(force bool) error {
 		return nil
 	}
 	m.stopping = true
+	// 用户点了停止就先记下来：强制停止可能先超时复位 m.stopping，
+	// 进程随后才真正退出，那时只有 p.expected 还能说明「这是主动停的」。
+	p.expected = true
 	m.mu.Unlock()
 	m.notify()
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
@@ -353,6 +361,8 @@ func (m *Manager) stopFailed(p *botProcess, reason string) {
 	m.mu.Lock()
 	if m.bot == p {
 		m.stopping, m.runtimeError = false, reason
+		// 进程其实还活着：撤回「这是主动停止」的标记，之后它若崩溃要按崩溃处理。
+		p.expected = false
 	}
 	m.mu.Unlock()
 	m.notify()

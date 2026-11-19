@@ -64,7 +64,7 @@ export function HomePage() {
                 </span>}
             </div>
             {branchSharedData && <Typography.Text type="warning" className="branch-data-warning">
-                分支版本与正式版共用数据目录，启动时可能迁移配置或数据库。<Link to="/settings">去设置</Link>
+                分支版本与正式版共用数据目录，启动时可能迁移配置或数据库。<Link to="/diagnostics">查看版本隔离设置</Link>
             </Typography.Text>}
             {!state.selected && <Link className="installed-link" to="/versions">前往版本管理</Link>}
 
