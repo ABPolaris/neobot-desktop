@@ -72,19 +72,70 @@ ManifestDPIAware true
 
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
+
+## Install directory memory ---------------------------------------------------
+## wails_tools.nsh is regenerated on every "wails build", so customisations must
+## live here. NSIS InstallDirRegKey is not an option: it only reads the registry
+## (it never writes it) and it runs with the 32-bit registry view, while
+## wails_tools.nsh writes the uninstall key through SetRegView 64.
+## LogicLib (${If}) and FileFunc (${GetParent}) come from wails_tools.nsh/MUI.nsh,
+## which this file already relies on for ${UNINST_KEY} and the other wails.* macros.
+
 !ifdef WAILS_INSTALL_SCOPE
   !if "${WAILS_INSTALL_SCOPE}" == "user"
-    InstallDir "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
+    !define NEOBOT_UNINST_ROOT     HKCU
+    !define NEOBOT_DEFAULT_INSTDIR "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
   !else
-    InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
+    !define NEOBOT_UNINST_ROOT     HKLM
+    !define NEOBOT_DEFAULT_INSTDIR "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
   !endif
 !else
-  InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
-!endif # Default installing folder ($PROGRAMFILES is Program Files folder).
+  !define NEOBOT_UNINST_ROOT       HKLM
+  !define NEOBOT_DEFAULT_INSTDIR   "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
+!endif
+
+InstallDir "${NEOBOT_DEFAULT_INSTDIR}"
+
+# Install directory recorded by a previous run; empty when there is none.
+Var NeoBotPrevDir
+
+# Reads $NeoBotPrevDir. InstallLocation is written by this script; DisplayIcon and
+# UninstallString are read for installs made before that value existed.
+!macro NeoBotReadPrevInstallDir
+    StrCpy $NeoBotPrevDir ""
+    SetRegView 64
+
+    ReadRegStr $NeoBotPrevDir ${NEOBOT_UNINST_ROOT} "${UNINST_KEY}" "InstallLocation"
+
+    ${If} $NeoBotPrevDir == ""
+        ReadRegStr $0 ${NEOBOT_UNINST_ROOT} "${UNINST_KEY}" "DisplayIcon"
+        ${If} $0 != ""
+            ${GetParent} "$0" $NeoBotPrevDir
+        ${Else}
+            ReadRegStr $0 ${NEOBOT_UNINST_ROOT} "${UNINST_KEY}" "UninstallString"
+            ${If} $0 != ""
+                StrCpy $0 $0 "" 1
+                StrCpy $0 $0 -1
+                ${GetParent} "$0" $NeoBotPrevDir
+            ${EndIf}
+        ${EndIf}
+    ${EndIf}
+
+    SetRegView lastused
+!macroend
+
 ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
    !insertmacro wails.checkArchitecture
+
+   # Reuse the previous install directory unless /D= or InstallDir already moved it.
+   !insertmacro NeoBotReadPrevInstallDir
+   ${If} $NeoBotPrevDir != ""
+   ${AndIf} $INSTDIR == "${NEOBOT_DEFAULT_INSTDIR}"
+   ${AndIf} ${FileExists} "$NeoBotPrevDir\"
+       StrCpy $INSTDIR $NeoBotPrevDir
+   ${EndIf}
 FunctionEnd
 
 Section
@@ -103,6 +154,21 @@ Section
     !insertmacro wails.associateCustomProtocols
 
     !insertmacro wails.writeUninstaller
+
+    # Remember where this copy lives so the next run can pre-fill the directory page
+    # and "Apps & features" can show the location. wails.writeUninstaller already set
+    # the 64-bit view; set it again so this block stays correct if that macro changes.
+    SetRegView 64
+    WriteRegStr ${NEOBOT_UNINST_ROOT} "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+
+    # Installing somewhere else leaves the old folder behind: report it, never delete it.
+    ${If} $NeoBotPrevDir != ""
+    ${AndIf} $NeoBotPrevDir != $INSTDIR
+    ${AndIf} ${FileExists} "$NeoBotPrevDir\${PRODUCT_EXECUTABLE}"
+        ${IfNot} ${Silent}
+            MessageBox MB_OK|MB_ICONINFORMATION "An older copy is still installed in:$\r$\n$NeoBotPrevDir$\r$\n$\r$\nThis setup installs to a new folder. The old folder was left untouched; delete it manually if it is no longer needed."
+        ${EndIf}
+    ${EndIf}
 SectionEnd
 
 Section "uninstall"
