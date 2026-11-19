@@ -66,6 +66,32 @@ jobs:
         shell: pwsh
       - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
       - run: wails build -platform windows/amd64 -nsis
+      - name: Sign and repack Windows binaries
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERT_PFX) { Write-Host 'no certificate configured, skipping code signing'; exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+          $signtool = Get-ChildItem -Path (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin') -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { $signtool = (Get-Command signtool.exe -ErrorAction SilentlyContinue).Source }
+          if (-not $signtool) { throw 'signtool.exe not found on this runner' }
+          $app = 'build/bin/neobot-desktop.exe'
+          if (-not (Test-Path $app)) { throw 'application binary not found' }
+          & $signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $pfx /p $env:WINDOWS_CERT_PASSWORD $app
+          if ($LASTEXITCODE -ne 0) { throw 'code signing failed: application binary' }
+          # Repack the installer with the signed executable, then sign the installer itself.
+          Push-Location build/windows/installer
+          & makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\neobot-desktop.exe project.nsi
+          if ($LASTEXITCODE -ne 0) { throw 'repacking the installer failed' }
+          Pop-Location
+          $installer = 'build/bin/neobot-desktop-amd64-installer.exe'
+          & $signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $pfx /p $env:WINDOWS_CERT_PASSWORD $installer
+          if ($LASTEXITCODE -ne 0) { throw "code signing failed: installer" }
+          Remove-Item $pfx -Force
       - uses: actions/upload-artifact@v4
         with:
           name: qegg-assets-windows

@@ -69,9 +69,11 @@ ManifestDPIAware true
 !insertmacro MUI_LANGUAGE "SimpChinese" # 简体中文（主语言）
 !insertmacro MUI_LANGUAGE "English"     # English fallback
 
-## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
-#!uninstfinalize 'signtool --file "%1"'
-#!finalize 'signtool --file "%1"'
+## Code signing hooks. They stay commented so a machine without a certificate
+## can still build; CI signs the produced binaries instead (see qegg-release.yml).
+## To sign from the build machine, uncomment both lines and put signtool on PATH.
+#!uninstfinalize 'signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com "%1"'
+#!finalize 'signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com "%1"'
 
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
