@@ -95,6 +95,7 @@ type Snapshot struct {
 	DashboardURL   string      `json:"dashboard_url"`
 	IsolateData    bool        `json:"isolate_data"`
 	DataDir        string      `json:"data_dir"`
+	LauncherLogDir string      `json:"launcher_log_dir"`
 }
 
 type diskState struct {
@@ -128,6 +129,8 @@ type Manager struct {
 	branchRepo     string
 	branches       []Branch
 	branchesAt     time.Time
+
+	logState *launcherLogState
 }
 
 func Open(root string, changed func()) (*Manager, error) {
@@ -139,17 +142,24 @@ func Open(root string, changed func()) (*Manager, error) {
 		return nil, err
 	}
 	m := &Manager{root: root, changed: changed, installed: map[string]Version{}, releaseLock: release}
+	m.startLauncherLog()
+	m.logs.sink = m.appendLauncherLog
+	// 打开失败时要把已经创建的日志文件一起关掉，否则会漏一个文件句柄。
+	abort := func() {
+		m.closeLauncherLog()
+		release()
+	}
 	// Decode into a zero value so a settings file that omits a source field does
 	// not inherit a default it never asked for; validSources fills the preset.
 	var state diskState
 	err = readJSON(filepath.Join(root, "settings.json"), &state)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		release()
+		abort()
 		return nil, fmt.Errorf("读取启动器设置：%w", err)
 	}
 	state.Sources, err = validSources(state.Sources)
 	if err != nil {
-		release()
+		abort()
 		return nil, err
 	}
 	if state.Backups == nil {
@@ -164,11 +174,11 @@ func Open(root string, changed func()) (*Manager, error) {
 		_ = m.persist()
 	}
 	if !validDiskState(m.state) {
-		release()
+		abort()
 		return nil, errors.New("启动器版本记录无效")
 	}
 	if err := m.recoverData(); err != nil {
-		release()
+		abort()
 		return nil, err
 	}
 	if recoverErr := m.recoverVersionDirs(); recoverErr != nil {
@@ -254,6 +264,7 @@ func (m *Manager) Snapshot() Snapshot {
 		Recommended: recommendedVersion, Sources: m.state.Sources, Setup: m.setup,
 		SetupSupported: m.setupSupported, DashboardURL: m.dashboardURL, Stopping: m.stopping,
 		RuntimeError: m.runtimeError, Starting: m.preparing, LogRun: m.logRun, IsolateData: m.state.IsolateData,
+		LauncherLogDir: m.launcherLogDir(),
 	}
 	for _, v := range m.installed {
 		s.Installed = append(s.Installed, v)
@@ -384,6 +395,7 @@ func (m *Manager) Close() {
 		<-jobDone
 	}
 	_ = m.Stop(true)
+	m.closeLauncherLog()
 	m.releaseLock()
 }
 

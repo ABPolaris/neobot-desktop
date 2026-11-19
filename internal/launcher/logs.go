@@ -26,6 +26,8 @@ type sessionLog struct {
 	branch   string
 	first    []string
 	recent   [logRecent]string
+	// sink 把每一行同时写给启动器日志文件；为 nil 时只保留内存缓冲。
+	sink func(string)
 }
 
 type LogSnapshot struct {
@@ -55,6 +57,9 @@ func (l *sessionLog) add(line string) {
 	}
 	l.total++
 	l.revision++
+	if l.sink != nil {
+		l.sink(line)
+	}
 }
 
 func (m *Manager) Logs(revision uint64) LogSnapshot {
