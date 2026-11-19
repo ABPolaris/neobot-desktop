@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"neobot-desktop/internal/launcher"
 )
@@ -27,6 +28,18 @@ func (a *App) startup(ctx context.Context) {
 		a.manager, err = launcher.Open(root, func() { runtime.EventsEmit(ctx, "launcher:changed") })
 	}
 	a.initErr = err
+}
+
+// secondInstanceLaunch 在用户重复打开启动器时把已有窗口拉到前台。
+func (a *App) secondInstanceLaunch(options.SecondInstanceData) {
+	a.mu.RLock()
+	ctx := a.ctx
+	a.mu.RUnlock()
+	if ctx == nil {
+		return
+	}
+	runtime.WindowShow(ctx)
+	runtime.WindowUnminimise(ctx)
 }
 
 func (a *App) shutdown(_ context.Context) {
