@@ -27,8 +27,12 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 232, G: 243, B: 253, A: 255},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId:               "neobot-desktop",
+			OnSecondInstanceLaunch: app.secondInstanceLaunch,
+		},
+		OnStartup:  app.startup,
+		OnShutdown: app.shutdown,
 		Bind: []interface{}{
 			app,
 		},
