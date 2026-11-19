@@ -179,6 +179,25 @@ SectionEnd
 Section "uninstall"
     !insertmacro wails.setShellContext
 
+    # Drop the autostart entry: otherwise Windows keeps launching an executable
+    # that no longer exists. The launcher is a 64-bit process and writes this value
+    # in the 64-bit view, while the installer runs as 32-bit.
+    SetRegView 64
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NeoBot Desktop"
+
+    # The launcher keeps running in the tray, so uninstalling while it is up would
+    # leave a half-deleted folder with no uninstall entry left behind.
+    ${If} ${FileExists} "$INSTDIR\${PRODUCT_EXECUTABLE}"
+        ClearErrors
+        Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
+        ${If} ${Errors}
+            ${IfNot} ${Silent}
+                MessageBox MB_OK|MB_ICONEXCLAMATION "NeoBot Desktop is still running. Quit it from the tray icon first, then run the uninstaller again."
+            ${EndIf}
+            Abort
+        ${EndIf}
+    ${EndIf}
+
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
     RMDir /r $INSTDIR

@@ -5,6 +5,7 @@ import {useLauncher} from './LauncherProvider'
 import {HomePage} from '../pages/HomePage'
 import {SetupPage} from '../pages/SetupPage'
 import {VersionsPage} from '../pages/VersionsPage'
+import {DiagnosticsPage} from '../pages/DiagnosticsPage'
 import {SettingsPage} from '../pages/SettingsPage'
 import {TitleBar} from './TitleBar'
 
@@ -27,6 +28,7 @@ export function AppShell() {
                     <Route path="/" element={<HomePage />} />
                     <Route path="/setup" element={<SetupPage />} />
                     <Route path="/versions" element={<VersionsPage />} />
+                    <Route path="/diagnostics" element={<DiagnosticsPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>}

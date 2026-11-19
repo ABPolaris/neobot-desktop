@@ -22,7 +22,7 @@ export function LogCard({running, installed}: {running: boolean; installed: laun
     const region = useRef<HTMLDivElement>(null)
     const {message} = App.useApp()
     const lines = logs?.lines ?? []
-    const gap = logs?.omitted ? `── 已省略中间 ${logs.omitted} 行，可在网页管理查看详细日志 ──` : ''
+    const gap = logs?.omitted ? `── 已省略中间 ${logs.omitted} 行，完整日志见「诊断」页 ──` : ''
 
     async function copyLogs() {
         const text = gap && logs ? [...lines.slice(0, logs.gap_after), gap, ...lines.slice(logs.gap_after)].join('\n') : lines.join('\n')

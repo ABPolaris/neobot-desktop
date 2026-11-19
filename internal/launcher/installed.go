@@ -43,6 +43,10 @@ func (m *Manager) scanInstalled() error {
 			continue
 		}
 		name := entry.Name()
+		if versionTrashName.MatchString(name) {
+			// 卸载版本时的中转目录：删到一半会被留在磁盘上，绝不能当成已安装版本。
+			continue
+		}
 		dir := filepath.Join(m.root, "versions", name)
 		record, recordErr := readInstallRecord(dir)
 		if recordErr == nil && record.Name == name && isFile(m.binary(name)) {

@@ -7,6 +7,7 @@ import {APP_VERSION} from './version'
 const tabs = [
     {path: '/', label: '启动', icon: 'play'},
     {path: '/versions', label: '版本', icon: 'layers'},
+    {path: '/diagnostics', label: '诊断', icon: 'diagnostics'},
     {path: '/settings', label: '设置', icon: 'settings'},
 ] as const
 

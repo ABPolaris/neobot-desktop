@@ -1,14 +1,14 @@
-import {App, Card, Collapse, Form, Input, Radio, Space, Switch, Typography} from 'antd'
-import {useEffect, useState} from 'react'
-import {SaveSources, SetVersionIsolation} from '../../wailsjs/go/main/App'
-import {launcher} from '../../wailsjs/go/models'
+import {App, Card, Collapse, Form, Input, Radio, Typography} from 'antd'
 import {BrowserOpenURL} from '../../wailsjs/runtime/runtime'
+import {useEffect, useState} from 'react'
+import {SaveSources} from '../../wailsjs/go/main/App'
+import {launcher} from '../../wailsjs/go/models'
 import {useLauncher} from '../app/LauncherProvider'
-import {APP_VERSION} from '../app/version'
+import {SupervisorCard} from '../components/SupervisorCard'
+import {UpdateCard} from '../components/UpdateCard'
 
 export function SettingsPage() {
     const {action, state} = useLauncher()
-    const {modal} = App.useApp()
     const [form] = Form.useForm<launcher.Sources>()
     const [openKeys, setOpenKeys] = useState<string[]>(state?.sources.preset === 'custom' ? ['sources'] : [])
     const saved = state?.sources
@@ -28,12 +28,6 @@ export function SettingsPage() {
     }, [preset])
     if (!state) return null
 
-    const downloading = state.job.state === 'running'
-    const isolationBusy = state.starting || state.stopping || downloading || Boolean(state.running)
-    const isolationHint = state.starting || state.stopping || state.running
-        ? '停止 NeoBot 后可修改。'
-        : downloading ? '下载任务结束后可修改。' : ''
-
     function save(values: launcher.Sources) {
         void action(() => SaveSources(launcher.Sources.createFrom(values)))
     }
@@ -46,21 +40,9 @@ export function SettingsPage() {
         save({...values, preset: 'custom'})
     }
 
-    function toggleIsolation(enabled: boolean) {
-        modal.confirm({
-            title: enabled ? '开启版本隔离？' : '关闭版本隔离？',
-            content: enabled
-                ? '开启后每个版本使用独立数据目录，首次启动需要重新配置。现有共用数据不会复制、移动或删除。'
-                : '关闭后所有版本重新使用共用数据目录；已有的独立数据会保留但不再使用。',
-            okText: enabled ? '开启' : '关闭',
-            cancelText: '取消',
-            onOk: () => action(() => SetVersionIsolation(enabled)),
-        })
-    }
-
     return <div className="page">
         <header className="page-heading"><Typography.Title level={1}>设置</Typography.Title></header>
-        <Card title="下载源">
+        <Card className="form-card" title="下载源">
             <Form form={form} initialValues={state.sources} layout="vertical">
                 <Form.Item name="preset" label="下载方案">
                     <Radio.Group options={[
@@ -80,28 +62,21 @@ export function SettingsPage() {
                     </>}]} />
             </Form>
         </Card>
-        <Card title="数据目录" extra={<Space size="small"><Typography.Text>版本隔离</Typography.Text>
-            <Switch aria-label="版本隔离" checked={state.isolate_data} disabled={isolationBusy}
-                onChange={toggleIsolation} /></Space>}>
-            <div className="data-dir">
-                <Typography.Text className="data-path" code copyable>{state.data_dir}</Typography.Text>
-                {isolationBusy && <Typography.Text type="secondary">{isolationHint}</Typography.Text>}
-            </div>
-        </Card>
-        <Collapse className="about-collapse" items={[{
-            key: 'about',
-            label: '关于',
-            extra: <Typography.Text type="secondary">v{APP_VERSION}</Typography.Text>,
-            children: <Space direction="vertical" size={10}>
-                <Space size={8}>
-                    <Typography.Text type="secondary">版本号</Typography.Text>
-                    <Typography.Text code copyable={{text: APP_VERSION}}>{APP_VERSION}</Typography.Text>
-                </Space>
-                <Space size={16} wrap>
-                    <Typography.Link onClick={() => BrowserOpenURL('https://github.com/SuperQuail/NeoBot')}>项目主页</Typography.Link>
-                    <Typography.Link onClick={() => BrowserOpenURL('https://github.com/SuperQuail/neobot-desktop/issues')}>问题反馈</Typography.Link>
-                </Space>
-            </Space>,
-        }]} />
+        <SupervisorCard />
+        <UpdateCard />
+        {/* 「关于」类信息统一放页脚：不属于任何一张卡片的操作流。 */}
+        <footer className="settings-footer">
+            <Typography.Link onClick={() => BrowserOpenURL('https://github.com/SuperQuail/neobot-desktop')}>
+                启动器主页
+            </Typography.Link>
+            <Typography.Link onClick={() => BrowserOpenURL('https://github.com/SuperQuail/neobot-desktop/issues')}>
+                问题反馈
+            </Typography.Link>
+            <Typography.Link onClick={() => BrowserOpenURL('https://github.com/SuperQuail/NeoBot')}>
+                NeoBot 项目
+            </Typography.Link>
+            {state.update.page_url && <Typography.Link
+                onClick={() => BrowserOpenURL(state.update.page_url)}>最新发布页</Typography.Link>}
+        </footer>
     </div>
 }

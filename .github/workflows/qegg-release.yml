@@ -92,12 +92,19 @@ jobs:
           & $signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $pfx /p $env:WINDOWS_CERT_PASSWORD $installer
           if ($LASTEXITCODE -ne 0) { throw "code signing failed: installer" }
           Remove-Item $pfx -Force
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          $installer = 'neobot-desktop-amd64-installer.exe'
+          $hash = (Get-FileHash -LiteralPath "build/bin/$installer" -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+          "$hash  $installer" | Set-Content -LiteralPath build/bin/checksums.txt -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
           name: qegg-assets-windows
           if-no-files-found: error
           path: |
             build/bin/neobot-desktop-amd64-installer.exe
+            build/bin/checksums.txt
   version:
     needs:
       - plan
