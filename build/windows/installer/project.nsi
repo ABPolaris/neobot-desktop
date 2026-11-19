@@ -64,7 +64,10 @@ ManifestDPIAware true
 
 !insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
 
-!insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
+## 语言：先列中文，MUI 会按系统语言自动选择；系统语言不匹配时回落到第一个。
+## SimpChinese 由 NSIS 自带的语言文件提供，向导按钮/提示会自动变成中文。
+!insertmacro MUI_LANGUAGE "SimpChinese" # 简体中文（主语言）
+!insertmacro MUI_LANGUAGE "English"     # English fallback
 
 ## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
 #!uninstfinalize 'signtool --file "%1"'
