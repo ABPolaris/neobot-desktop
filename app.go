@@ -475,6 +475,16 @@ func (a *App) SetCloseToTray(enabled bool) error {
 
 // ── 通用 ─────────────────────────────────────────────────────────
 
+// OpenTerminal 打开目标版本 venv 的系统终端。acknowledged 为 true 表示界面
+// 已经让用户确认过首次风险提示。
+func (a *App) OpenTerminal(version string, acknowledged bool) error {
+	m, err := a.get()
+	if err != nil {
+		return err
+	}
+	return m.OpenTerminal(version, acknowledged)
+}
+
 // OpenFolder 用资源管理器打开启动器自己的目录。
 func (a *App) OpenFolder(kind string) error {
 	m, err := a.get()
