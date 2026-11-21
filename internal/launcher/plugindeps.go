@@ -86,12 +86,19 @@ if plugin_dir.is_dir():
                 continue
         if missing:
             found.append({"name": str(declared.get("name") or entry.name), "missing": missing})
-print(json.dumps(found, ensure_ascii=False))
+print(json.dumps({"packaging": Requirement is not None, "plugins": found}, ensure_ascii=False))
 `
 
 type pluginDependency struct {
 	Name    string   `json:"name"`
 	Missing []string `json:"missing"`
+}
+
+// pluginDependencyReport 是一次插件依赖探测的结果。Packaging 为 false 时探测
+// 脚本无法判断版本范围，此时 Plugins 里的需求不一定是真的缺失。
+type pluginDependencyReport struct {
+	Packaging bool               `json:"packaging"`
+	Plugins   []pluginDependency `json:"plugins"`
 }
 
 // syncPluginDependencies 在启动 NeoBot 之前补齐第三方插件的 PyPI 依赖。
@@ -110,12 +117,12 @@ func (m *Manager) syncPluginDependencies(version, data string, sources Sources) 
 	if !isFile(python) || !hasPluginManifests(pluginDir) {
 		return
 	}
-	found, err := probePluginDependencies(python, pluginDir)
+	report, err := probePluginDependencies(python, pluginDir)
 	if err != nil {
 		m.logMessage("无法检查插件依赖：" + err.Error())
 		return
 	}
-	requirements, names := pluginRequirements(found, disabledPlugins(data))
+	requirements, names := pluginRequirements(report.Plugins, disabledPlugins(data))
 	if len(requirements) == 0 {
 		return
 	}
@@ -163,8 +170,17 @@ func hasPluginManifests(pluginDir string) bool {
 }
 
 // probePluginDependencies 让目标版本自己的解释器扫描插件目录，返回缺失依赖。
-func probePluginDependencies(python, pluginDir string) ([]pluginDependency, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), pluginProbeTimeout)
+func probePluginDependencies(python, pluginDir string) (pluginDependencyReport, error) {
+	return probePluginDependenciesWithin(python, pluginDir, pluginProbeTimeout)
+}
+
+// probePluginDependenciesWithin 是 probePluginDependencies 的带超时版本：体检可以
+// 用更短的等待上限，避免把整个体检拖住太久。
+func probePluginDependenciesWithin(python, pluginDir string, timeout time.Duration) (pluginDependencyReport, error) {
+	if timeout <= 0 {
+		timeout = pluginProbeTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, python, "-c", pluginDependencyProbe, pluginDir)
 	cmd.Env = cleanEnv(false, "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
@@ -175,23 +191,23 @@ func probePluginDependencies(python, pluginDir string) ([]pluginDependency, erro
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return nil, errors.New("检查插件依赖超时")
+			return pluginDependencyReport{}, errors.New("检查插件依赖超时")
 		}
-		return nil, errors.New("无法读取插件依赖清单（NeoBot 版本可能不兼容）")
+		return pluginDependencyReport{}, errors.New("无法读取插件依赖清单（NeoBot 版本可能不兼容）")
 	}
 	return parsePluginDependencies(stdout.Bytes())
 }
 
-func parsePluginDependencies(raw []byte) ([]pluginDependency, error) {
+func parsePluginDependencies(raw []byte) (pluginDependencyReport, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
-		return nil, errors.New("插件依赖清单为空")
+		return pluginDependencyReport{}, errors.New("插件依赖清单为空")
 	}
-	var found []pluginDependency
-	if err := json.Unmarshal(trimmed, &found); err != nil {
-		return nil, errors.New("无法解析插件依赖清单")
+	var report pluginDependencyReport
+	if err := json.Unmarshal(trimmed, &report); err != nil {
+		return pluginDependencyReport{}, errors.New("无法解析插件依赖清单")
 	}
-	return found, nil
+	return report, nil
 }
 
 // pluginRequirements 汇总待安装的需求串：跳过用户停用的插件，按插件名排序

@@ -71,8 +71,26 @@ func TestHealthTargetUsesRunningVersionDataDir(t *testing.T) {
 	if want := filepath.Join(root, "isolated", "2.0.0"); target.dataDir != want {
 		t.Fatalf("dataDir = %q，期望 %q", target.dataDir, want)
 	}
+	if target.version != "2.0.0" {
+		t.Fatalf("体检版本 = %q，期望运行中的 2.0.0", target.version)
+	}
 	if len(target.versions) != 1 || target.versions[0].Name != "2.0.0" {
 		t.Fatalf("versions = %+v", target.versions)
+	}
+}
+
+func TestHealthTargetUsesSelectedVersionWhenStopped(t *testing.T) {
+	root := t.TempDir()
+	m := &Manager{
+		root:  root,
+		state: diskState{Selected: "1.0.0", IsolateData: true},
+	}
+	target := m.healthTarget()
+	if target.version != "1.0.0" {
+		t.Fatalf("体检版本 = %q，期望选中的 1.0.0", target.version)
+	}
+	if want := filepath.Join(root, "isolated", "1.0.0"); target.dataDir != want {
+		t.Fatalf("dataDir = %q，期望 %q", target.dataDir, want)
 	}
 }
 
@@ -107,7 +125,7 @@ func TestHealthCommandsSkipWithoutSelectedVersion(t *testing.T) {
 	if command := m.doctorCommand(healthTarget{}); command.Skipped == "" {
 		t.Fatal("没有选中版本时 doctor 应跳过")
 	}
-	if command := m.pipCheckCommand(healthTarget{selected: "1.0.0"}); command.Skipped == "" {
+	if command := m.pipCheckCommand(healthTarget{version: "1.0.0"}); command.Skipped == "" {
 		t.Fatal("缺少 python.exe 时 pip check 应跳过")
 	}
 
@@ -115,10 +133,10 @@ func TestHealthCommandsSkipWithoutSelectedVersion(t *testing.T) {
 	root := t.TempDir()
 	m = &Manager{root: root}
 	healthTestWrite(t, filepath.Join(root, "versions", "1.0.0", "Scripts", "python.exe"), "")
-	if command := m.pipCheckCommand(healthTarget{selected: "1.0.0"}); command.Skipped == "" {
+	if command := m.pipCheckCommand(healthTarget{version: "1.0.0"}); command.Skipped == "" {
 		t.Fatal("没有 uv 时 pip check 应跳过")
 	}
-	command := m.doctorCommand(healthTarget{selected: "1.0.0", dataDir: filepath.Join(root, "data")})
+	command := m.doctorCommand(healthTarget{version: "1.0.0", dataDir: filepath.Join(root, "data")})
 	if command.Skipped != "" || command.Path == "" {
 		t.Fatalf("doctor 命令 = %+v", command)
 	}
@@ -128,6 +146,107 @@ func TestHealthCommandsSkipWithoutSelectedVersion(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(command.Env, " "), "PYTHONUTF8=1") {
 		t.Fatalf("env 里缺少 PYTHONUTF8：%v", command.Env)
+	}
+}
+
+func TestPluginDependencyHealthReportsMissing(t *testing.T) {
+	report := pluginDependencyReport{
+		Packaging: true,
+		Plugins: []pluginDependency{
+			{Name: "demo", Missing: []string{"feedparser>=6.0,<7", "lxml>=5,<7"}},
+			{Name: "disabled", Missing: []string{"akshare>=1.20,<2"}},
+		},
+	}
+	state, detail, hint := pluginDependencyHealth(report, map[string]bool{"disabled": true})
+	if state != "warn" || !strings.Contains(detail, "demo 缺少 feedparser>=6.0,<7、lxml>=5,<7") ||
+		strings.Contains(detail, "akshare") || hint == "" {
+		t.Fatalf("state = %q，detail = %q，hint = %q", state, detail, hint)
+	}
+}
+
+func TestPluginDependencyHealthOKWhenSatisfied(t *testing.T) {
+	state, detail, hint := pluginDependencyHealth(pluginDependencyReport{Packaging: true}, nil)
+	if state != "ok" || detail == "" || hint != "" {
+		t.Fatalf("state = %q，detail = %q，hint = %q", state, detail, hint)
+	}
+}
+
+func TestPluginDependencyHealthWarnsWithoutPackaging(t *testing.T) {
+	report := pluginDependencyReport{
+		Packaging: false,
+		Plugins:   []pluginDependency{{Name: "demo", Missing: []string{"feedparser>=6.0,<7"}}},
+	}
+	state, detail, hint := pluginDependencyHealth(report, nil)
+	if state != "warn" || !strings.Contains(detail, "packaging") || hint == "" {
+		t.Fatalf("state = %q，detail = %q，hint = %q", state, detail, hint)
+	}
+}
+
+func TestPluginDependencyHealthIgnoresDisabledWithoutPackaging(t *testing.T) {
+	report := pluginDependencyReport{
+		Packaging: false,
+		Plugins:   []pluginDependency{{Name: "off", Missing: []string{"feedparser>=6.0,<7"}}},
+	}
+	if state, detail, hint := pluginDependencyHealth(report, map[string]bool{"off": true}); state != "ok" || detail == "" || hint != "" {
+		t.Fatalf("停用插件不该触发提示：state = %q，detail = %q，hint = %q", state, detail, hint)
+	}
+}
+
+func TestCheckPluginDependenciesSkipsWithoutVersionOrPlugins(t *testing.T) {
+	m := &Manager{root: t.TempDir()}
+	if state, _, _ := m.checkPluginDependencies(m.healthTarget()); state != "skip" {
+		t.Fatalf("没有版本时 state = %q，应为 skip", state)
+	}
+
+	m.state.Selected = "1.0.0"
+	healthTestWrite(t, filepath.Join(m.root, "versions", "1.0.0", "Scripts", "python.exe"), "")
+	state, detail, _ := m.checkPluginDependencies(m.healthTarget())
+	if state != "skip" || !strings.Contains(detail, "插件") {
+		t.Fatalf("没有插件时 state = %q，detail = %q", state, detail)
+	}
+}
+
+func TestCheckPluginDependenciesReportsProbeFailureReadOnly(t *testing.T) {
+	root := t.TempDir()
+	m := &Manager{root: root, state: diskState{Selected: "1.0.0"}}
+	healthTestWrite(t, filepath.Join(root, "versions", "1.0.0", "Scripts", "python.exe"), "")
+	manifest := filepath.Join(root, "data", "plugins", "demo", "plugin.toml")
+	healthTestWrite(t, manifest, "name = \"demo\"\npython_dependencies = [\"feedparser>=6.0,<7\"]\n")
+
+	state, detail, hint := m.checkPluginDependencies(m.healthTarget())
+	if state != "warn" || !strings.Contains(detail, "无法检查插件依赖") || hint == "" {
+		t.Fatalf("state = %q，detail = %q，hint = %q", state, detail, hint)
+	}
+	// 体检必须只读：探测失败也不能动插件目录。
+	if _, err := os.Stat(manifest); err != nil {
+		t.Fatalf("插件清单被体检改动了：%v", err)
+	}
+	if entries, err := os.ReadDir(filepath.Dir(manifest)); err != nil || len(entries) != 1 {
+		t.Fatalf("插件目录内容 = %v, %v", entries, err)
+	}
+}
+
+func TestHealthCommandsUseRunningVersion(t *testing.T) {
+	root := t.TempDir()
+	m := &Manager{root: root, state: diskState{Selected: "1.0.0"}}
+	selectedPython := filepath.Join(root, "versions", "1.0.0", "Scripts", "python.exe")
+	runningPython := filepath.Join(root, "versions", "2.0.0", "Scripts", "python.exe")
+	healthTestWrite(t, selectedPython, "")
+	healthTestWrite(t, runningPython, "")
+	healthTestWrite(t, filepath.Join(root, "tools", "uv-"+uvVersion+".exe"), "")
+	m.bot = &botProcess{version: "2.0.0"}
+
+	target := m.healthTarget()
+	pip := m.pipCheckCommand(target)
+	if pip.Skipped != "" || !strings.Contains(strings.Join(pip.Args, " "), runningPython) {
+		t.Fatalf("pip check 应使用运行中的 2.0.0：%+v", pip)
+	}
+	doctor := m.doctorCommand(target)
+	if doctor.Skipped != "" || !strings.EqualFold(doctor.Path, runningPython) {
+		t.Fatalf("doctor 应使用运行中的 2.0.0：%+v", doctor)
+	}
+	if strings.Contains(strings.Join(pip.Args, " "), selectedPython) {
+		t.Fatalf("pip check 不应使用选中的 1.0.0：%+v", pip)
 	}
 }
 
@@ -155,7 +274,7 @@ func TestRefreshHealthCollectsEveryCheck(t *testing.T) {
 		health, busy := m.health, m.healthBusy
 		m.mu.Unlock()
 		if !busy {
-			want := []string{"env", "pipcheck", "doctor", "control", "data", "disk"}
+			want := []string{"env", "pipcheck", "plugindeps", "doctor", "control", "data", "disk"}
 			if len(health.Items) != len(want) {
 				t.Fatalf("体检项 = %+v", health.Items)
 			}
