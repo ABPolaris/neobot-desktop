@@ -33,11 +33,16 @@ func TestPluginRequirementsEmptyWhenAllDisabled(t *testing.T) {
 }
 
 func TestParsePluginDependencies(t *testing.T) {
-	found, err := parsePluginDependencies([]byte(" [{\"name\":\"x\",\"missing\":[\"a>=1\"]}]\n"))
-	if err != nil || len(found) != 1 || found[0].Name != "x" || found[0].Missing[0] != "a>=1" {
-		t.Fatalf("parse = %+v, %v", found, err)
+	report, err := parsePluginDependencies([]byte(`{"packaging":true,"plugins":[{"name":"x","missing":["a>=1"]}]}`))
+	if err != nil || !report.Packaging || len(report.Plugins) != 1 ||
+		report.Plugins[0].Name != "x" || report.Plugins[0].Missing[0] != "a>=1" {
+		t.Fatalf("parse = %+v, %v", report, err)
 	}
-	for _, raw := range []string{"", "   ", "not json", "{\"name\":1}"} {
+	report, err = parsePluginDependencies([]byte(`{"packaging":false,"plugins":[]}`))
+	if err != nil || report.Packaging || len(report.Plugins) != 0 {
+		t.Fatalf("packaging 不可用时应保留标志：%+v, %v", report, err)
+	}
+	for _, raw := range []string{"", "   ", "not json", `{"plugins":1}`} {
 		if _, err := parsePluginDependencies([]byte(raw)); err == nil {
 			t.Fatalf("expected an error for %q", raw)
 		}
@@ -142,9 +147,9 @@ func TestPluginDependencyProbeRunsAgainstHost(t *testing.T) {
 	if python == "" || pluginDir == "" {
 		t.Skip("set NEOBOT_TEST_PYTHON and NEOBOT_TEST_PLUGIN_DIR to run against a real installation")
 	}
-	found, err := probePluginDependencies(python, pluginDir)
+	report, err := probePluginDependencies(python, pluginDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("probe = %+v", found)
+	t.Logf("probe = %+v", report)
 }

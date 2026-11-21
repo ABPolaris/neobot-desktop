@@ -21,6 +21,8 @@ const (
 	healthDoctorTimeout = 10 * time.Second
 	// healthPipTimeout 比 doctor 宽松：uv 要读取整个环境的元数据。
 	healthPipTimeout = 60 * time.Second
+	// healthPluginTimeout 是插件依赖探测的等待上限：只做本地清单扫描，不需要等网络。
+	healthPluginTimeout = 30 * time.Second
 	// healthControlTimeout 是本机控制接口的等待上限。
 	healthControlTimeout = 5 * time.Second
 	// healthOutputLimit 限制命令输出进内存的量；详情和诊断包只用到开头一段。
@@ -48,7 +50,9 @@ type Health struct {
 
 // healthTarget 是体检和诊断包共用的上下文：在锁内取一次，之后所有检查都在锁外跑。
 type healthTarget struct {
-	selected string
+	// version 是这次体检针对的版本：运行中的版本优先，否则是下次启动的版本。
+	// 检查使用的解释器和数据目录必须来自同一个版本。
+	version  string
 	versions []Version
 	dataDir  string
 	running  bool
@@ -60,30 +64,30 @@ type healthTarget struct {
 func (m *Manager) healthTarget() healthTarget {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	version := m.state.Selected
+	if m.bot != nil {
+		version = m.bot.version
+	}
 	target := healthTarget{
-		selected: m.state.Selected,
+		version:  version,
 		running:  m.bot != nil,
 		bot:      m.bot,
 		usage:    m.usage,
 		versions: make([]Version, 0, len(m.installed)),
 	}
-	for _, version := range m.installed {
-		target.versions = append(target.versions, version)
+	for _, item := range m.installed {
+		target.versions = append(target.versions, item)
 	}
 	sort.Slice(target.versions, func(i, j int) bool {
 		return compareVersions(target.versions[i].Name, target.versions[j].Name) < 0
 	})
-	inUse := target.selected
-	if m.bot != nil {
-		inUse = m.bot.version
-	}
-	target.dataDir = m.dataDir(inUse)
+	target.dataDir = m.dataDir(version)
 	return target
 }
 
 // RefreshHealth 异步体检，结果写入 Snapshot.Health 并触发 launcher:changed。
 // 必须覆盖：已安装版本完整性（python.exe/neobot.exe）、uv pip check、
-// 上游 python -m neobot_app.cli doctor（退出码 1 表示有依赖问题）、
+// 已启用插件的依赖、上游 python -m neobot_app.cli doctor（退出码 1 表示有依赖问题）、
 // 本机控制接口可达性、数据目录可写、磁盘剩余空间。
 // 体检不启动 NeoBot，也不得修改任何文件。
 func (m *Manager) RefreshHealth() error {
@@ -112,6 +116,7 @@ func (m *Manager) runHealth() {
 	checks := []healthCheck{
 		{key: "env", title: "已安装版本", run: m.checkInstalledFiles},
 		{key: "pipcheck", title: "依赖完整性", run: m.checkPipCheck},
+		{key: "plugindeps", title: "插件依赖", run: m.checkPluginDependencies},
 		{key: "doctor", title: "NeoBot 自检", run: m.checkDoctor},
 		{key: "control", title: "本机控制接口", run: m.checkControl},
 		{key: "data", title: "数据目录", run: m.checkDataDir},
@@ -177,7 +182,7 @@ func (m *Manager) checkInstalledFiles(target healthTarget) (string, string, stri
 	return "fail", detail, "在「版本管理」里对相应版本点「修复安装」；修不好就重新安装这个版本。"
 }
 
-// checkPipCheck 用 uv 检查当前选中版本的依赖是否互相兼容。
+// checkPipCheck 用 uv 检查当前体检版本的依赖是否互相兼容。
 func (m *Manager) checkPipCheck(target healthTarget) (string, string, string) {
 	command := m.pipCheckCommand(target)
 	if command.Skipped != "" {
@@ -194,6 +199,45 @@ func (m *Manager) checkPipCheck(target healthTarget) (string, string, string) {
 	default:
 		return "fail", "依赖检查发现冲突：" + clipText(result.Output, healthDetailLimit), "在「版本管理」里点「修复安装」重新安装依赖后重试。"
 	}
+}
+
+// checkPluginDependencies 检查已启用插件声明的 Python 依赖是否装在当前版本的
+// 环境里。只读：缺失时不在体检里安装，交给启动流程自动补装。
+func (m *Manager) checkPluginDependencies(target healthTarget) (string, string, string) {
+	python, skipped := m.healthPython(target)
+	if skipped != "" {
+		return "skip", skipped, "在「版本管理」里安装或修复这个版本后再体检。"
+	}
+	pluginDir := filepath.Join(target.dataDir, "plugins")
+	if !hasPluginManifests(pluginDir) {
+		return "skip", "数据目录里还没有安装插件。", "安装插件后再体检。"
+	}
+	report, err := probePluginDependenciesWithin(python, pluginDir, healthPluginTimeout)
+	if err != nil {
+		return "warn", "无法检查插件依赖：" + err.Error(), "在「版本管理」里点「修复安装」（分支版本请用「更新」），或检查插件清单是否兼容当前版本。"
+	}
+	return pluginDependencyHealth(report, disabledPlugins(target.dataDir))
+}
+
+// pluginDependencyHealth 把探测结果转成体检项。缺依赖时用 warn：启动 NeoBot
+// 时会自动补装；只有探测本身或版本判断不可用时才需要用户额外处理。
+func pluginDependencyHealth(report pluginDependencyReport, disabled map[string]bool) (string, string, string) {
+	missing := make([]string, 0, len(report.Plugins))
+	for _, item := range report.Plugins {
+		if disabled[item.Name] || len(item.Missing) == 0 {
+			continue
+		}
+		missing = append(missing, item.Name+" 缺少 "+strings.Join(item.Missing, "、"))
+	}
+	if len(missing) == 0 {
+		return "ok", "已启用插件的依赖都已满足。", ""
+	}
+	if !report.Packaging {
+		// 没有 packaging 时探测脚本把声明过的需求都当成缺失，不能把它们当成真实结果。
+		return "warn", "当前环境缺少 packaging，无法判断插件依赖的版本范围。", "启动一次 NeoBot，或在「版本管理」里点「修复安装」后重新体检。"
+	}
+	detail := "以下插件依赖未满足：" + strings.Join(missing, "；") + "。"
+	return "warn", clipText(detail, healthDetailLimit), "启动 NeoBot 时会自动尝试安装；失败时请检查下载源、网络或插件声明的依赖范围。"
 }
 
 // checkDoctor 运行上游自检命令。退出码 1 表示它报告了依赖或配置问题。
@@ -341,12 +385,12 @@ func (m *Manager) doctorCommand(target healthTarget) stagedCommand {
 	}
 }
 
-// healthPython 返回当前选中版本的解释器；条件不满足时给出跳过原因。
+// healthPython 返回当前体检版本的 Python 解释器；条件不满足时给出跳过原因。
 func (m *Manager) healthPython(target healthTarget) (string, string) {
-	if target.selected == "" {
+	if target.version == "" {
 		return "", "还没有选择要运行的版本。"
 	}
-	python := filepath.Join(m.versionDir(target.selected), "Scripts", "python.exe")
+	python := filepath.Join(m.versionDir(target.version), "Scripts", "python.exe")
 	if !isFile(python) {
 		return "", "当前版本缺少 python.exe，无法在这个版本上运行检查。"
 	}
