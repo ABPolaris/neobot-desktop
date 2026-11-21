@@ -1,8 +1,9 @@
 import {useState} from 'react'
 import {Button, Typography} from 'antd'
-import {LogViewer} from '../components/LogViewer'
+import {AdvancedCard} from '../components/AdvancedCard'
 import {HealthCard} from '../components/HealthCard'
 import {StorageCard} from '../components/StorageCard'
+import {LogViewer} from '../components/LogViewer'
 
 // 诊断页只放「机器现在怎么样」的东西：体检、磁盘占用、完整日志。
 // 「怎么跑」的配置留在设置页，「跑没跑」留在启动页。
@@ -18,6 +19,7 @@ export function DiagnosticsPage() {
         </header>
         <HealthCard />
         <StorageCard />
+        <AdvancedCard />
         <LogViewer open={logsOpen} onClose={() => setLogsOpen(false)} />
     </div>
 }

@@ -103,6 +103,9 @@ type Snapshot struct {
 	Health         Health           `json:"health"`
 	Update         UpdateStatus     `json:"update"`
 	Supervisor     SupervisorStatus `json:"supervisor"`
+	Terminal       TerminalInfo     `json:"terminal"`
+	// TerminalAcknowledged 记录用户是否已经确认过「高级」终端的使用提示。
+	TerminalAcknowledged bool `json:"terminal_acknowledged"`
 }
 
 type diskState struct {
@@ -116,6 +119,8 @@ type diskState struct {
 	CloseToTray bool              `json:"close_to_tray"`
 	// CloseToTraySet 区分「用户明确关掉」和「还没设置过」：没设置过时默认收进托盘。
 	CloseToTraySet bool `json:"close_to_tray_set"`
+	// TerminalAcknowledged 只影响第一次打开高级终端时的风险提示。
+	TerminalAcknowledged bool `json:"terminal_acknowledged"`
 }
 
 type Manager struct {
@@ -293,6 +298,7 @@ func (m *Manager) Snapshot() Snapshot {
 		RuntimeError: m.runtimeError, Starting: m.preparing, LogRun: m.logRun, IsolateData: m.state.IsolateData,
 		Usage: m.usage, Health: m.health, Update: m.update,
 		Supervisor: m.supervisorStatus(), LauncherLogDir: m.launcherLogDir(),
+		Terminal: m.terminalInfoLocked(), TerminalAcknowledged: m.state.TerminalAcknowledged,
 	}
 	for _, v := range m.installed {
 		s.Installed = append(s.Installed, v)
@@ -528,6 +534,16 @@ func (m *Manager) Folder(kind string) (string, error) {
 		return m.dataDir(inUse), nil
 	case "versions":
 		return filepath.Join(m.root, "versions"), nil
+	case "version":
+		if inUse == "" && len(m.installed) == 1 {
+			for name := range m.installed {
+				inUse = name
+			}
+		}
+		if inUse == "" {
+			return "", errors.New("还没有选择要维护的版本")
+		}
+		return m.versionDir(inUse), nil
 	case "backups":
 		return filepath.Join(m.root, "backups"), nil
 	case "logs":

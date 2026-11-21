@@ -175,6 +175,15 @@ body { margin: 0; }
 .health-item > span { margin-left: auto; font-size: 12px; white-space: nowrap; }
 .health-detail { grid-column: 1 / -1; padding: 2px 0 10px 15px; font-size: 12px; line-height: 1.6; color: #64748b; overflow-wrap: anywhere; }
 
+/* 高级终端：提示只在点击后出现，避免常驻占用诊断页的注意力 */
+.advanced-notice { margin: 12px 18px 0; }
+.advanced-notice code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+.terminal-warning p { margin: 0 0 8px; }
+.terminal-warning ul { margin: 0 0 8px; padding-left: 20px; }
+.terminal-warning li { margin: 4px 0; line-height: 1.6; }
+.terminal-warning code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+.terminal-warning p:last-child { margin-bottom: 0; color: #64748b; }
+
 /* 键值行：版本号、路径这类「名称 → 值」的信息 */
 .kv-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 6px 14px; }
 .kv-grid dt { font-size: 13px; color: #64748b; }
