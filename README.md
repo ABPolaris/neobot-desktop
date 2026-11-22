@@ -124,7 +124,7 @@ Linux 版暂不支持应用内自动更新：有新版本时应用会提示到�
 
 在「诊断」页的「高级」卡片中点击「打开终端」，会打开一个已经进入当前版本虚拟环境的系统终端（Windows 为 `cmd.exe`，Linux 为 `gnome-terminal`、`konsole`、`xterm` 等终端模拟器），工作目录是该版本的数据目录。终端里可以直接使用 `python`、`uv` 和 `python -m neobot_app.cli doctor`；`uv venv` 默认不安装 pip，安装包请用 `uv pip ...`。
 
-Linux 会依次尝试 `$TERMINAL`、`xdg-terminal-exec`、`gnome-terminal`、`konsole`、`xfce4-terminal`、`kitty`、`alacritty`、`wezterm`、`foot`、`xterm`。没有可用终端时请先安装其中一个，或设置 `$TERMINAL`。默认使用 `bash`；如果系统没有 bash，则回退到 `$SHELL` 或 `/bin/sh`。
+Linux 会依次尝试 `$TERMINAL`、`xdg-terminal-exec`、`gnome-terminal`、`kgx`（GNOME Console）、`konsole`、`xfce4-terminal`、`kitty`、`alacritty`、`wezterm`、`foot`、`xterm`。没有可用终端时请先安装其中一个，或设置 `$TERMINAL`。默认使用 `bash`；如果系统没有 bash，则回退到 `$SHELL` 或 `/bin/sh`。
 
 第一次打开需要确认一次风险提示，之后不再重复弹出。终端是普通系统终端，拥有当前账户权限，并不是沙箱：
 

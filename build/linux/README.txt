@@ -8,7 +8,7 @@ NeoBot Desktop（Linux x64）
 - xdg-utils（打开目录/网页）
 - DBus 会话总线（单实例与托盘）
 - 中文字体，例如 Noto Sans CJK
-- 高级终端需要系统里安装 gnome-terminal、konsole、xterm 之一，或设置 $TERMINAL
+- 高级终端需要系统里安装 gnome-terminal、kgx（GNOME Console）、konsole、xterm 之一，或设置 $TERMINAL
 
 安装（用户级，不需要 root）
 --------------------------

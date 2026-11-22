@@ -44,6 +44,7 @@ func findTerminal(dir string) (string, []string, error) {
 	for _, name := range []string{
 		"xdg-terminal-exec",
 		"gnome-terminal",
+		"kgx", // GNOME Console（gnome-console 包）
 		"konsole",
 		"xfce4-terminal",
 		"kitty",
@@ -58,7 +59,7 @@ func findTerminal(dir string) (string, []string, error) {
 		}
 		return path, terminalArgs(path, dir, shell, shellArgs), nil
 	}
-	return "", nil, errors.New("没有找到可用的终端模拟器，请安装 gnome-terminal、konsole 或 xterm，或设置 $TERMINAL")
+	return "", nil, errors.New("没有找到可用的终端模拟器，请安装 gnome-terminal、kgx（GNOME Console）、konsole 或 xterm，或设置 $TERMINAL")
 }
 
 // terminalArgs 按终端模拟器拼参数。不同终端的工作目录和命令参数并不统一。
@@ -69,6 +70,9 @@ func terminalArgs(path, dir, shell string, shellArgs []string) []string {
 		return append([]string{"--working-directory=" + dir}, command...)
 	case "gnome-terminal":
 		return append([]string{"--working-directory=" + dir, "--"}, command...)
+	case "kgx":
+		// GNOME Console 接受 -e COMMAND [ARGUMENT...]，也支持 --working-directory。
+		return append([]string{"--working-directory=" + dir, "-e"}, command...)
 	case "konsole":
 		return append([]string{"--workdir", dir, "-e"}, command...)
 	case "xfce4-terminal":

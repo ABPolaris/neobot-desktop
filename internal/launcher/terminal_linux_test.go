@@ -17,6 +17,7 @@ func TestTerminalArgsForKnownEmulators(t *testing.T) {
 		want []string
 	}{
 		{"gnome-terminal", []string{"--working-directory=/data", "--", "/usr/bin/bash", "-i"}},
+		{"kgx", []string{"--working-directory=/data", "-e", "/usr/bin/bash", "-i"}},
 		{"konsole", []string{"--workdir", "/data", "-e", "/usr/bin/bash", "-i"}},
 		{"xfce4-terminal", []string{"--working-directory=/data", "-x", "/usr/bin/bash", "-i"}},
 		{"kitty", []string{"--directory", "/data", "/usr/bin/bash", "-i"}},
@@ -30,6 +31,27 @@ func TestTerminalArgsForKnownEmulators(t *testing.T) {
 		if strings.Join(got, "\x00") != strings.Join(test.want, "\x00") {
 			t.Fatalf("%s args = %q; want %q", test.name, got, test.want)
 		}
+	}
+}
+
+func TestFindTerminalPrefersGNOMEConsoleOverKonsole(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"kgx", "konsole"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("TERMINAL", "")
+	t.Setenv("PATH", dir)
+	path, args, err := findTerminal("/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(path) != "kgx" {
+		t.Fatalf("terminal = %q; want kgx before konsole", path)
+	}
+	if len(args) < 2 || args[0] != "--working-directory=/data" || args[1] != "-e" {
+		t.Fatalf("kgx args = %q; want --working-directory and -e", args)
 	}
 }
 
