@@ -26,7 +26,7 @@ func openTerminalWindow(dir string, env []string) error {
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	return cmd.Start()
+	return startDetached(cmd)
 }
 
 // findTerminal 按「用户指定 → XDG 规范 → 常见终端」的顺序查找。返回的
@@ -67,7 +67,7 @@ func terminalArgs(path, dir, shell string, shellArgs []string) []string {
 	command := append([]string{shell}, shellArgs...)
 	switch filepath.Base(path) {
 	case "xdg-terminal-exec":
-		return append([]string{"--working-directory=" + dir}, command...)
+		return append([]string{"--dir=" + dir}, command...)
 	case "gnome-terminal":
 		return append([]string{"--working-directory=" + dir, "--"}, command...)
 	case "kgx":

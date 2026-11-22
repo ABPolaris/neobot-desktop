@@ -25,7 +25,8 @@ import (
 var trayIconPNG []byte
 
 var (
-	trayMu         sync.Mutex
+	trayMu         sync.Mutex // 保护下面的状态字段
+	trayUiMu       sync.Mutex // 串行化 systray 的菜单/图标调用（库内部不保证线程安全）
 	trayCmds       trayCommands
 	trayStarted    bool
 	trayStopped    bool
@@ -169,6 +170,23 @@ func trayReady() {
 			markTrayBroken()
 		}
 	}()
+	trayMu.Lock()
+	stopped := trayStopped
+	trayMu.Unlock()
+	if stopped {
+		return
+	}
+	// systray 的 MenuItem 没有对 title/disabled 做内部加锁；这里和 updateTrayStatus
+	// 共用一把锁，避免 notify 的多个 goroutine 并发改菜单。
+	trayUiMu.Lock()
+	defer trayUiMu.Unlock()
+	// 等锁期间可能已经被 stopTray 关闭。
+	trayMu.Lock()
+	stopped = trayStopped || trayBroken
+	trayMu.Unlock()
+	if stopped {
+		return
+	}
 	systray.SetIcon(trayIconPNG)
 	systray.SetTitle("NeoBot Desktop")
 
@@ -238,6 +256,15 @@ func updateTrayStatus(running bool, tooltip string) {
 	if !ready {
 		return
 	}
+	trayUiMu.Lock()
+	defer trayUiMu.Unlock()
+	// 等锁期间托盘可能已经被停止或标记为不可用。
+	trayMu.Lock()
+	active := trayMenuReady && !trayBroken && !trayStopped
+	trayMu.Unlock()
+	if !active {
+		return
+	}
 	applyTrayRunning(running)
 	applyTrayTooltip(tooltip)
 }
@@ -283,6 +310,8 @@ func stopTray() {
 	if end == nil {
 		return
 	}
+	trayUiMu.Lock()
+	defer trayUiMu.Unlock()
 	defer func() { _ = recover() }()
 	end()
 }

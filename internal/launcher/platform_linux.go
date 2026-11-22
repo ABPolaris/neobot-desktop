@@ -137,13 +137,22 @@ func appDataBase() (string, error) {
 	return filepath.Join(home, ".local", "share"), nil
 }
 
-// openPath 用桌面默认程序打开目录。
+// startDetached 启动一个不需要等待的进程，并在后台 Wait 回收，避免留下僵尸。
+func startDetached(cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
+// OpenPath 用桌面默认程序打开目录。
 func OpenPath(path string) error {
 	if _, err := exec.LookPath("xdg-open"); err == nil {
-		return exec.Command("xdg-open", path).Start()
+		return startDetached(exec.Command("xdg-open", path))
 	}
 	if _, err := exec.LookPath("gio"); err == nil {
-		return exec.Command("gio", "open", path).Start()
+		return startDetached(exec.Command("gio", "open", path))
 	}
 	return errors.New("没有找到可用的文件管理器，请安装 xdg-utils")
 }

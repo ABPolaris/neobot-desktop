@@ -16,6 +16,7 @@ func TestTerminalArgsForKnownEmulators(t *testing.T) {
 		name string
 		want []string
 	}{
+		{"xdg-terminal-exec", []string{"--dir=/data", "/usr/bin/bash", "-i"}},
 		{"gnome-terminal", []string{"--working-directory=/data", "--", "/usr/bin/bash", "-i"}},
 		{"kgx", []string{"--working-directory=/data", "-e", "/usr/bin/bash", "-i"}},
 		{"konsole", []string{"--workdir", "/data", "-e", "/usr/bin/bash", "-i"}},
