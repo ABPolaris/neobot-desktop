@@ -23,6 +23,39 @@ import (
 	"time"
 )
 
+func TestCopyDataKeepsExecutableBit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 没有可执行位")
+	}
+	source := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(filepath.Join(source, "sub"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(source, "sub", "run.sh")
+	regular := filepath.Join(source, "config.toml")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regular, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "copy")
+	if err := copyData(source, target); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(target, "sub", "run.sh"))
+	if err != nil || info.Mode().Perm()&0111 == 0 {
+		t.Fatalf("copied script mode = %v, %v; want executable bit", info, err)
+	}
+	info, err = os.Stat(filepath.Join(target, "config.toml"))
+	if err != nil || info.Mode().Perm()&0111 != 0 {
+		t.Fatalf("copied regular file mode = %v, %v; want no executable bit", info, err)
+	}
+	if info, err := os.Stat(filepath.Join(target, "sub")); err != nil || info.Mode().Perm() != 0700 {
+		t.Fatalf("copied directory mode = %v, %v; want 0700", info, err)
+	}
+}
+
 func TestVersionSwitchBacksUpAndRestoresCompatibleData(t *testing.T) {
 	root := t.TempDir()
 	m := Manager{root: root, state: diskState{Backups: map[string]string{}}}

@@ -3,10 +3,14 @@
 package launcher
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -91,4 +95,98 @@ func TestSamePathIsCaseSensitive(t *testing.T) {
 	if !samePath("/tmp/./neobot", "/tmp/neobot") {
 		t.Fatal("cleaned paths were not treated as the same")
 	}
+}
+
+func TestPrepareLaunchSetsDeathSignal(t *testing.T) {
+	cmd := exec.Command("true")
+	prepareLaunch(cmd)
+	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setpgid || cmd.SysProcAttr.Pdeathsig != syscall.SIGKILL {
+		t.Fatalf("launch attrs = %+v; want Setpgid and Pdeathsig SIGKILL", cmd.SysProcAttr)
+	}
+}
+
+// TestPdeathsigKillsChildWhenLauncherDies 用一个测试二进制子进程模拟启动器：
+// 它启动 sleep 后挂起，父测试 SIGKILL 它，sleep 必须随 Pdeathsig 一起消失。
+func TestPdeathsigKillsChildWhenLauncherDies(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	helper := exec.Command(os.Args[0], "-test.run=^TestPdeathsigHelper$")
+	helper.Env = append(os.Environ(),
+		"NEOBOT_PDEATHSIG_HELPER=1",
+		"NEOBOT_PDEATHSIG_PID="+pidFile,
+	)
+	if err := helper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var childPID int
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		data, err := os.ReadFile(pidFile)
+		if err == nil {
+			childPID, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+			if childPID > 0 {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			_ = helper.Process.Kill()
+			_ = helper.Wait()
+			t.Fatalf("helper did not publish a child pid: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// 等一小段时间再确认子进程仍然存活：Pdeathsig 依赖创建子进程的线程，
+	// 如果那个线程被 Go 运行时提前结束，这里会暴露出来。
+	time.Sleep(300 * time.Millisecond)
+	if !linuxProcessAlive(childPID) {
+		_ = helper.Process.Kill()
+		_ = helper.Wait()
+		t.Fatalf("child %d died before the launcher helper", childPID)
+	}
+	if err := helper.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = helper.Wait()
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if !linuxProcessAlive(childPID) {
+			return
+		}
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(childPID, syscall.SIGKILL)
+			t.Fatalf("child %d survived the launcher SIGKILL", childPID)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestPdeathsigHelper 是上面的被启动器模拟进程；正常测试运行时直接返回。
+func TestPdeathsigHelper(t *testing.T) {
+	if os.Getenv("NEOBOT_PDEATHSIG_HELPER") != "1" {
+		return
+	}
+	pidFile := os.Getenv("NEOBOT_PDEATHSIG_PID")
+	child := exec.Command("sleep", "30")
+	prepareLaunch(child)
+	if err := child.Start(); err != nil {
+		os.Exit(2)
+	}
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(child.Process.Pid)), 0600); err != nil {
+		os.Exit(3)
+	}
+	// 用定时器阻塞，避免 Go 运行时把 select{} 判定为死锁后提前退出。
+	time.Sleep(10 * time.Minute)
+}
+
+func linuxProcessAlive(pid int) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	end := bytes.LastIndexByte(data, ')')
+	if end < 0 {
+		return false
+	}
+	fields := bytes.Fields(data[end+1:])
+	return len(fields) > 0 && string(fields[0]) != "Z"
 }

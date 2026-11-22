@@ -56,10 +56,18 @@ func lockInstance(path string) (func(), error) {
 	return release, nil
 }
 
-// prepareLaunch 让 NeoBot 成为独立进程组的组长。之后停止或启动器退出时可以对
-// 整个进程组发信号，等价于 Windows 的 Job Object 接管整棵进程树。
+// prepareLaunch 让 NeoBot 成为独立进程组的组长，并在启动器进程死亡时由内核
+// 给直接子进程发 SIGKILL。Setpgid 负责正常 Stop 时收掉整组，Pdeathsig 补上
+// 启动器崩溃/被强杀时的兜底（对应 Windows 的 Job Object）。
+//
+// Pdeathsig 只覆盖直接子进程；如果 NeoBot 再启动 setsid 的孙进程，仍要依赖
+// 正常停止流程。不要在这里 LockOSThread：锁住的 goroutine 退出会结束线程，
+// 反而会提前触发 Pdeathsig。
 func prepareLaunch(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid:   true,
+		Pdeathsig: syscall.SIGKILL,
+	}
 }
 
 // trackProcessTree 接管一个刚启动的进程组：closeTree 杀掉整组，ownsPID 判断某个

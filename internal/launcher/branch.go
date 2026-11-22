@@ -394,7 +394,7 @@ func extractBranchSource(ctx context.Context, archive, destination string) (stri
 		if err != nil {
 			return "", err
 		}
-		output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, copyFileMode(file.Mode()))
 		if err != nil {
 			input.Close()
 			return "", errors.New("解压分支源码失败")

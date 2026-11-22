@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -188,6 +189,62 @@ func TestExtractBranchSource(t *testing.T) {
 	}
 	if !isFile(filepath.Join(workspace, "app", "pyproject.toml")) {
 		t.Fatal("workspace files were not extracted")
+	}
+}
+
+func TestExtractBranchSourceKeepsExecutableBit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 没有可执行位")
+	}
+	root := t.TempDir()
+	archive := filepath.Join(root, "source.zip")
+	file, err := os.Create(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := zip.NewWriter(file)
+	for _, entry := range []struct {
+		name string
+		mode os.FileMode
+		body string
+	}{
+		{"NeoBot-dev/pyproject.toml", 0644, "[project]\nname='neobot'\n"},
+		{"NeoBot-dev/app/pyproject.toml", 0755, "[project]\nname='neobot-app'\n"},
+		{"NeoBot-dev/packages/keep/pyproject.toml", 0644, "[project]\n"},
+		{"NeoBot-dev/packages/keep/run.sh", 0755, "#!/bin/sh\n"},
+	} {
+		header := &zip.FileHeader{Name: entry.name, Method: zip.Store}
+		header.SetMode(entry.mode)
+		part, err := writer.CreateHeader(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write([]byte(entry.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := extractBranchSource(context.Background(), archive, filepath.Join(root, "src"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, wantExec := range map[string]bool{
+		filepath.Join(workspace, "app", "pyproject.toml"):              true,
+		filepath.Join(workspace, "packages", "keep", "run.sh"):         true,
+		filepath.Join(workspace, "packages", "keep", "pyproject.toml"): false,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm()&0111 != 0; got != wantExec {
+			t.Fatalf("%s executable = %v; want %v (mode %v)", path, got, wantExec, info.Mode())
+		}
 	}
 }
 
