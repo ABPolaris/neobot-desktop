@@ -15,7 +15,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     if: github.head_ref != 'release'
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +24,12 @@ jobs:
         with: { go-version: '1.26', cache: true }
       - name: Install qegg
         run: go install github.com/SuperQuail/QuailEgg/cmd/qegg@latest
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
+      - run: wails build -tags webkit2_41
       - name: Check
         run: qegg check --ci
       - name: Preview
