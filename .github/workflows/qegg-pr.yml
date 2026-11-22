@@ -40,7 +40,9 @@ jobs:
         run: |
           qegg plan --markdown > plan.md
           if [ -s plan.md ]; then
-            gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none -F plan.md
+            # fork PR 的 GITHUB_TOKEN 只读，评论失败不应让整个检查变红。
+            gh pr comment ${{ github.event.pull_request.number }} --edit-last --create-if-none -F plan.md ||
+              echo "unable to comment on the release plan (fork PR token is read-only); skipping"
           else
             echo "no pending release; skipping the plan comment"
           fi
