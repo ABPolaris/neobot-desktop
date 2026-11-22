@@ -4,15 +4,16 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-// requireTerminalSupport 跳过尚未在 Linux 实现的高级终端用例。
+// requireTerminalSupport 在当前平台没有高级终端时跳过相关用例。
 func requireTerminalSupport(t *testing.T) {
 	t.Helper()
 	if !terminalSupported() {
-		t.Skip("高级终端尚未在 Linux 实现")
+		t.Skip("当前平台不支持高级终端")
 	}
 }
 
@@ -101,17 +102,22 @@ func TestTerminalEnvIsCleanAndScoped(t *testing.T) {
 		t.Fatalf("PATH = %q; tools directory missing", values["PATH"])
 	}
 	want := map[string]string{
-		"VIRTUAL_ENV":                        venv,
-		"PYTHONUTF8":                         "1",
-		"NEOBOT_DATA_DIR":                    data,
-		"NEOBOT_ENV_FILE":                    filepath.Join(data, ".env"),
-		"UV_CACHE_DIR":                       filepath.Join(root, "cache"),
-		"UV_PYTHON_INSTALL_DIR":              filepath.Join(root, "python"),
-		"UV_PYTHON_PREFERENCE":               "only-managed",
-		"NODEFAULTCURRENTDIRECTORYINEXEPATH": "1",
-		"UV_DEFAULT_INDEX":                   index,
-		"PIP_INDEX_URL":                      index,
-		"UV_PYTHON_INSTALL_MIRROR":           mirror,
+		"VIRTUAL_ENV":              venv,
+		"PYTHONUTF8":               "1",
+		"NEOBOT_DATA_DIR":          data,
+		"NEOBOT_ENV_FILE":          filepath.Join(data, ".env"),
+		"UV_CACHE_DIR":             filepath.Join(root, "cache"),
+		"UV_PYTHON_INSTALL_DIR":    filepath.Join(root, "python"),
+		"UV_PYTHON_PREFERENCE":     "only-managed",
+		"UV_DEFAULT_INDEX":         index,
+		"PIP_INDEX_URL":            index,
+		"UV_PYTHON_INSTALL_MIRROR": mirror,
+	}
+	if runtime.GOOS == "windows" {
+		want["NODEFAULTCURRENTDIRECTORYINEXEPATH"] = "1"
+	} else {
+		want["PS1"] = "[NeoBot 1.0.0] \\w \\$ "
+		want["PROMPT"] = "[NeoBot 1.0.0] \\w \\$ "
 	}
 	for name, value := range want {
 		if values[name] != value {
@@ -141,18 +147,28 @@ func TestWriteUVShimTracksVersionedBinary(t *testing.T) {
 	if err := os.MkdirAll(tools, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tools, "uv-"+uvVersion+".exe"), []byte("stub"), 0600); err != nil {
+	if err := os.WriteFile(uvExecutable(m.root), []byte("stub"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.writeUVShim(); err != nil {
 		t.Fatal(err)
 	}
-	content, err := os.ReadFile(filepath.Join(tools, "uv.cmd"))
+	shimName, wantContent, mode, err := uvShim(uvExecutable(m.root))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), "uv-"+uvVersion+".exe") {
+	shim := filepath.Join(tools, shimName)
+	content, err := os.ReadFile(shim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != string(wantContent) || !strings.Contains(string(content), filepath.Base(uvExecutable(m.root))) {
 		t.Fatalf("shim = %q", content)
+	}
+	if runtime.GOOS != "windows" {
+		if info, err := os.Stat(shim); err != nil || info.Mode().Perm() != mode.Perm() {
+			t.Fatalf("shim mode = %v, %v; want %v", info, err, mode)
+		}
 	}
 }
 
@@ -165,7 +181,7 @@ func TestOpenTerminalRequiresAcknowledgmentAndPersists(t *testing.T) {
 	if err := os.MkdirAll(tools, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tools, "uv-"+uvVersion+".exe"), []byte("stub"), 0600); err != nil {
+	if err := os.WriteFile(uvExecutable(m.root), []byte("stub"), 0600); err != nil {
 		t.Fatal(err)
 	}
 

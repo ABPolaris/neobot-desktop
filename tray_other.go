@@ -1,9 +1,9 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package main
 
-// 非 Windows 平台目前没有托盘实现（Linux 的 StatusNotifierItem 尚未接入）：
-// 这里的签名与 tray_windows.go 保持一致，调用方不用区分平台。
+// 其他非 Windows 平台目前没有托盘实现：这里的签名与 tray_windows.go 保持一致，
+// 调用方不用区分平台。
 
 func startTray(trayCommands) {}
 

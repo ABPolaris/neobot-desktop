@@ -143,5 +143,5 @@ func OpenPath(path string) error {
 // samePath 在 Linux 上按大小写敏感比较。Windows 的实现仍然忽略大小写。
 func samePath(a, b string) bool { return filepath.Clean(a) == filepath.Clean(b) }
 
-// terminalSupported 报告当前平台是否实现了高级终端。Linux 终端在后续版本提供。
-func terminalSupported() bool { return false }
+// terminalSupported 报告当前平台是否实现了高级终端。
+func terminalSupported() bool { return true }
