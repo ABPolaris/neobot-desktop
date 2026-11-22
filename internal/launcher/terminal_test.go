@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+// requireTerminalSupport 跳过尚未在 Linux 实现的高级终端用例。
+func requireTerminalSupport(t *testing.T) {
+	t.Helper()
+	if !terminalSupported() {
+		t.Skip("高级终端尚未在 Linux 实现")
+	}
+}
+
 func TestTerminalTargetPriority(t *testing.T) {
 	m := &Manager{
 		root:      t.TempDir(),
@@ -40,6 +48,7 @@ func TestTerminalTargetPriority(t *testing.T) {
 }
 
 func TestTerminalInfoHasNoSecrets(t *testing.T) {
+	requireTerminalSupport(t)
 	m := versionsTestManager(t)
 	dir := versionsInstall(t, m, "1.0.0")
 	m.state.Selected = "1.0.0"
@@ -47,13 +56,13 @@ func TestTerminalInfoHasNoSecrets(t *testing.T) {
 	if !info.Available || info.Version != "1.0.0" || info.Label != "1.0.0" {
 		t.Fatalf("terminal info = %+v", info)
 	}
-	if info.Venv != dir || info.Python != filepath.Join(dir, "Scripts", "python.exe") {
+	if info.Venv != dir || info.Python != venvPython(filepath.Join(dir)) {
 		t.Fatalf("terminal paths = %+v", info)
 	}
 	if info.Data != filepath.Join(m.root, "data") {
 		t.Fatalf("data dir = %q", info.Data)
 	}
-	if info.UV != filepath.Join(m.root, "tools", "uv-"+uvVersion+".exe") {
+	if info.UV != uvExecutable(m.root) {
 		t.Fatalf("uv path = %q", info.UV)
 	}
 	if strings.Contains(info.Venv+info.Data+info.UV, ".env") {
@@ -85,7 +94,7 @@ func TestTerminalEnvIsCleanAndScoped(t *testing.T) {
 	if pathCount != 1 {
 		t.Fatalf("PATH appears %d times; want exactly one", pathCount)
 	}
-	if values["PATH"] == "" || !strings.HasPrefix(values["PATH"], filepath.Join(venv, "Scripts")) {
+	if values["PATH"] == "" || !strings.HasPrefix(values["PATH"], venvBin(venv)) {
 		t.Fatalf("PATH = %q; venv must come first", values["PATH"])
 	}
 	if !strings.Contains(values["PATH"], filepath.Join(root, "tools")) {
@@ -123,6 +132,7 @@ func TestTerminalEnvIsCleanAndScoped(t *testing.T) {
 }
 
 func TestWriteUVShimTracksVersionedBinary(t *testing.T) {
+	requireTerminalSupport(t)
 	m := versionsTestManager(t)
 	if err := m.writeUVShim(); err == nil {
 		t.Fatal("wrote a shim without uv")
@@ -147,6 +157,7 @@ func TestWriteUVShimTracksVersionedBinary(t *testing.T) {
 }
 
 func TestOpenTerminalRequiresAcknowledgmentAndPersists(t *testing.T) {
+	requireTerminalSupport(t)
 	m := versionsTestManager(t)
 	versionsInstall(t, m, "1.0.0")
 	m.state.Selected = "1.0.0"
@@ -205,6 +216,7 @@ func TestOpenTerminalRequiresAcknowledgmentAndPersists(t *testing.T) {
 }
 
 func TestOpenTerminalRejectsBusyAndIncompleteStates(t *testing.T) {
+	requireTerminalSupport(t)
 	m := versionsTestManager(t)
 	versionsInstall(t, m, "1.0.0")
 	m.state.Selected = "1.0.0"
@@ -230,7 +242,7 @@ func TestOpenTerminalRejectsBusyAndIncompleteStates(t *testing.T) {
 		t.Fatal("opened while the launcher was closing")
 	}
 	m.closing = false
-	if err := os.Remove(filepath.Join(m.versionDir("1.0.0"), "Scripts", "python.exe")); err != nil {
+	if err := os.Remove(venvPython(m.versionDir("1.0.0"))); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.OpenTerminal("1.0.0", true); err == nil || !strings.Contains(err.Error(), "环境不完整") {
@@ -239,6 +251,7 @@ func TestOpenTerminalRejectsBusyAndIncompleteStates(t *testing.T) {
 }
 
 func TestOpenTerminalReportsMissingUVWithoutBlocking(t *testing.T) {
+	requireTerminalSupport(t)
 	m := versionsTestManager(t)
 	versionsInstall(t, m, "1.0.0")
 	m.state.Selected = "1.0.0"
@@ -251,6 +264,7 @@ func TestOpenTerminalReportsMissingUVWithoutBlocking(t *testing.T) {
 }
 
 func TestOpenTerminalLaunchErrorIsReported(t *testing.T) {
+	requireTerminalSupport(t)
 	m := versionsTestManager(t)
 	versionsInstall(t, m, "1.0.0")
 	m.state.Selected = "1.0.0"

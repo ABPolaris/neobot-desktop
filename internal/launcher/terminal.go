@@ -60,6 +60,9 @@ func (m *Manager) terminalTargetLocked(requested string) (string, error) {
 // terminalInfoLocked 生成界面展示用的路径信息。调用方持有 m.mu。
 // 这里不检查文件是否存在，避免在快照里做磁盘 IO；打开终端时会再校验。
 func (m *Manager) terminalInfoLocked() TerminalInfo {
+	if !terminalSupported() {
+		return TerminalInfo{Reason: "当前系统暂不支持高级终端"}
+	}
 	target, err := m.terminalTargetLocked("")
 	if err != nil {
 		return TerminalInfo{Reason: err.Error()}
@@ -70,9 +73,9 @@ func (m *Manager) terminalInfoLocked() TerminalInfo {
 		Version:   target,
 		Label:     item.Label(),
 		Venv:      venv,
-		Python:    filepath.Join(venv, "Scripts", "python.exe"),
+		Python:    venvPython(venv),
 		Data:      m.dataDir(target),
-		UV:        filepath.Join(m.root, "tools", "uv-"+uvVersion+".exe"),
+		UV:        uvExecutable(m.root),
 		Available: true,
 	}
 }
@@ -83,6 +86,9 @@ func (m *Manager) terminalInfoLocked() TerminalInfo {
 // 确认后传 true，后端把确认状态写进 settings.json。没有确认过又传 false 的
 // 调用会被拒绝，避免绕过首次提示。
 func (m *Manager) OpenTerminal(version string, acknowledged bool) error {
+	if !terminalSupported() {
+		return errors.New("当前系统暂不支持高级终端")
+	}
 	m.mu.Lock()
 	if m.root == "" {
 		m.mu.Unlock()
@@ -130,7 +136,7 @@ func (m *Manager) OpenTerminal(version string, acknowledged bool) error {
 	if err := os.MkdirAll(data, 0700); err != nil {
 		return errors.New("无法准备数据目录，请检查磁盘空间或权限后重试")
 	}
-	if !isFile(filepath.Join(venv, "Scripts", "python.exe")) {
+	if !isFile(venvPython(venv)) {
 		return errors.New("当前版本环境不完整，请先修复安装")
 	}
 	// uv 的可执行文件是按版本命名的；生成一个固定的 uv.cmd 转发脚本，
@@ -148,7 +154,7 @@ func (m *Manager) OpenTerminal(version string, acknowledged bool) error {
 // writeUVShim 在 tools/ 下维护 uv.cmd，把 uv 转发到当前固定版本的 uv.exe。
 // 版本升级后内容会不匹配，下次打开终端时自动改写。
 func (m *Manager) writeUVShim() error {
-	exe := filepath.Join(m.root, "tools", "uv-"+uvVersion+".exe")
+	exe := uvExecutable(m.root)
 	if !isFile(exe) {
 		return errors.New("缺少 uv，请重新安装或修复该版本")
 	}
@@ -168,7 +174,7 @@ func (m *Manager) writeUVShim() error {
 func terminalEnv(root, data, venv string, sources Sources) []string {
 	env := cleanEnv(true)
 	pathParts := []string{
-		filepath.Join(venv, "Scripts"),
+		venvBin(venv),
 		venv,
 		filepath.Join(root, "tools"),
 	}

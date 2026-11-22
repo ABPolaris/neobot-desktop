@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -57,10 +56,10 @@ func TestBranchInstallRecordScanning(t *testing.T) {
 	m := Manager{root: root, installed: map[string]Version{}}
 	makeInstall := func(name string, record installRecord) {
 		dir := filepath.Join(root, "versions", name)
-		if err := os.MkdirAll(filepath.Join(dir, "Scripts"), 0700); err != nil {
+		if err := os.MkdirAll(venvBin(filepath.Join(dir)), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "Scripts", "neobot.exe"), []byte("x"), 0600); err != nil {
+		if err := os.WriteFile(botExecutable(filepath.Join(dir)), []byte("x"), 0600); err != nil {
 			t.Fatal(err)
 		}
 		if err := writeInstallRecord(dir, record); err != nil {
@@ -387,10 +386,10 @@ func TestRecoverVersionDirs(t *testing.T) {
 	m := Manager{root: root, installed: map[string]Version{}}
 	makeInstallAt := func(dir, name string) {
 		t.Helper()
-		if err := os.MkdirAll(filepath.Join(dir, "Scripts"), 0700); err != nil {
+		if err := os.MkdirAll(venvBin(filepath.Join(dir)), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "Scripts", "neobot.exe"), []byte("x"), 0600); err != nil {
+		if err := os.WriteFile(botExecutable(filepath.Join(dir)), []byte("x"), 0600); err != nil {
 			t.Fatal(err)
 		}
 		if err := writeInstallRecord(dir, installRecord{Name: name}); err != nil {
@@ -423,7 +422,7 @@ func TestRecoverVersionDirs(t *testing.T) {
 	if err := m.recoverVersionDirs(); err != nil {
 		t.Fatal(err)
 	}
-	if !isFile(filepath.Join(restoreDir, "Scripts", "neobot.exe")) || isDir(restoreOld) {
+	if !isFile(botExecutable(filepath.Join(restoreDir))) || isDir(restoreOld) {
 		t.Fatal("missing install was not restored from the old directory")
 	}
 
@@ -454,8 +453,8 @@ func TestRecoverVersionDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 	broken, _ := filepath.Glob(fileTarget + ".broken-*")
-	if !isFile(filepath.Join(fileTarget, "Scripts", "neobot.exe")) || len(broken) != 1 {
-		t.Fatalf("file target was not recovered: binary=%v broken=%v", isFile(filepath.Join(fileTarget, "Scripts", "neobot.exe")), broken)
+	if !isFile(botExecutable(filepath.Join(fileTarget))) || len(broken) != 1 {
+		t.Fatalf("file target was not recovered: binary=%v broken=%v", isFile(botExecutable(filepath.Join(fileTarget))), broken)
 	}
 
 	multi := branchID("multi")
@@ -481,10 +480,10 @@ func TestRecoverVersionDirs(t *testing.T) {
 
 	corrupt := branchID("corrupt")
 	corruptTarget := filepath.Join(versions, corrupt)
-	if err := os.MkdirAll(filepath.Join(corruptTarget, "Scripts"), 0700); err != nil {
+	if err := os.MkdirAll(venvBin(filepath.Join(corruptTarget)), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(corruptTarget, "Scripts", "neobot.exe"), []byte("x"), 0600); err != nil {
+	if err := os.WriteFile(botExecutable(filepath.Join(corruptTarget)), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(corruptTarget, ".installed"), []byte("{broken"), 0600); err != nil {
@@ -560,8 +559,8 @@ func TestUnderscoreBranchDoesNotTouchDataVersion(t *testing.T) {
 }
 
 func TestOpenDropsInvalidDataVersion(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("实例锁仅由 Windows 实现")
+	if !supported() {
+		t.Skip("实例锁仅在支持的平台实现")
 	}
 	root := t.TempDir()
 	if err := writeJSON(filepath.Join(root, "settings.json"), diskState{
@@ -586,10 +585,10 @@ func TestOpenDropsInvalidDataVersion(t *testing.T) {
 func TestInstalledReleaseWithoutRecord(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "versions", "1.2.3")
-	if err := os.MkdirAll(filepath.Join(dir, "Scripts"), 0700); err != nil {
+	if err := os.MkdirAll(venvBin(filepath.Join(dir)), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "Scripts", "neobot.exe"), []byte("x"), 0600); err != nil {
+	if err := os.WriteFile(botExecutable(filepath.Join(dir)), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	m := Manager{root: root, installed: map[string]Version{}}
